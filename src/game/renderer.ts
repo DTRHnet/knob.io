@@ -14,7 +14,9 @@ const MATERIAL_STYLE: Record<
   standard: { fill: '#243047', stroke: '#475569', accent: '#64748b', label: '' },
   ice: { fill: '#0c4a6e', stroke: '#38bdf8', accent: '#bae6fd', label: 'ICE' },
   bouncy: { fill: '#7c2d12', stroke: '#fb923c', accent: '#fed7aa', label: 'SPRING' },
+  super_bounce: { fill: '#4c1d95', stroke: '#c084fc', accent: '#f3e8ff', label: 'HYPER' },
   sticky: { fill: '#064e3b', stroke: '#10b981', accent: '#a7f3d0', label: 'STICKY' },
+  boost: { fill: '#064e3b', stroke: '#34d399', accent: '#a7f3d0', label: 'BOOST' },
   conveyor: { fill: '#312e81', stroke: '#818cf8', accent: '#c7d2fe', label: 'BELT' },
   breakable: { fill: '#78350f', stroke: '#f59e0b', accent: '#fde68a', label: 'FRAGILE' },
   soft: { fill: '#134e4a', stroke: '#2dd4bf', accent: '#99f6e4', label: 'GEL' },
@@ -305,6 +307,34 @@ export function renderMatchCanvas(
           ctx.lineTo(sx + 12, hh - 4);
           ctx.stroke();
         }
+      } else if (plat.material === 'super_bounce') {
+        ctx.strokeStyle = style.accent;
+        ctx.lineWidth = 2.2;
+        for (let sx = -hw + 12; sx < hw - 12; sx += 24) {
+          ctx.beginPath();
+          ctx.moveTo(sx, 3);
+          ctx.lineTo(sx + 6, -hh + 3);
+          ctx.lineTo(sx + 12, 3);
+          ctx.moveTo(sx, hh - 3);
+          ctx.lineTo(sx + 6, -1);
+          ctx.lineTo(sx + 12, hh - 3);
+          ctx.stroke();
+        }
+      } else if (plat.material === 'boost') {
+        const dir = (plat.boostImpulse ?? 560) >= 0 ? 1 : -1;
+        const shift = ((state.timeElapsed * 260 * dir) % 24 + 24) % 24;
+        ctx.strokeStyle = style.accent;
+        ctx.lineWidth = 2.2;
+        for (let cx = -hw + shift; cx < hw - 10; cx += 24) {
+          ctx.beginPath();
+          ctx.moveTo(cx - 5 * dir, -5);
+          ctx.lineTo(cx + 3 * dir, 0);
+          ctx.lineTo(cx - 5 * dir, 5);
+          ctx.moveTo(cx + 1 * dir, -5);
+          ctx.lineTo(cx + 9 * dir, 0);
+          ctx.lineTo(cx + 1 * dir, 5);
+          ctx.stroke();
+        }
       } else if (plat.material === 'conveyor') {
         const dir = (plat.conveyorSpeed ?? 150) >= 0 ? 1 : -1;
         const shift = ((state.timeElapsed * (plat.conveyorSpeed ?? 150)) % 24 + 24) % 24;
@@ -496,6 +526,18 @@ function drawPlayerCircle(ctx: CanvasRenderingContext2D, p: PlayerState, time: n
   // Blink gently if invulnerable
   if (p.invulnTimer > 0 && Math.floor(time * 16) % 2 === 0) {
     ctx.globalAlpha = 0.6;
+  }
+
+  // Active Bounce Boost / Chain kinetic aura ring
+  if (p.activeBoostFlash > 0 || p.bounceChain >= 1) {
+    ctx.save();
+    ctx.strokeStyle = p.activeBoostFlash > 0 ? '#34d399' : '#c084fc';
+    ctx.globalAlpha = p.activeBoostFlash > 0 ? 0.85 : 0.45;
+    ctx.lineWidth = p.activeBoostFlash > 0 ? 3.5 : 2;
+    ctx.beginPath();
+    ctx.arc(0, 0, p.radius + 7 + (p.activeBoostFlash > 0 ? 3 : 0), 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
   }
 
   // Heavy mode outer iron armor ring

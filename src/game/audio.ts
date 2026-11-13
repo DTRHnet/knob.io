@@ -36,6 +36,23 @@ class SoundEngine {
     osc.stop(ctx.currentTime + 0.11);
   }
 
+  public playBounceBoost(): void {
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'triangle';
+    const f = this.jitter(360);
+    osc.frequency.setValueAtTime(f, ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(f * 2.1, ctx.currentTime + 0.13);
+    gain.gain.setValueAtTime(0.11, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.14);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.15);
+  }
+
   public playBounce(intensity: number, heavy: boolean): void {
     const ctx = this.ensureContext();
     if (!ctx) return;

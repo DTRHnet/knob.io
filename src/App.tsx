@@ -24,7 +24,7 @@ import {
   computeRankTier,
   createMatchState,
   PlayerSeed,
-  stepMatch,
+  stepMatchFixed,
   updateMmr,
 } from './game/physics';
 import { CameraView, renderMatchCanvas } from './game/renderer';
@@ -34,6 +34,7 @@ import {
   GameMode,
   LobbyRoomSummary,
   MatchState,
+  PhysicsPresetId,
   PlayerInput,
   PlayerProfile,
   ReplayClip,
@@ -123,6 +124,7 @@ export default function App() {
   const [selectedMap, setSelectedMap] = useState<ArenaMap>(BUILTIN_MAPS[0]);
   const [selectedMode, setSelectedMode] = useState<GameMode>('classic');
   const [advancedPhysics, setAdvancedPhysics] = useState<boolean>(false);
+  const [physicsPreset, setPhysicsPreset] = useState<PhysicsPresetId>('map_default');
   const [rankedQueue, setRankedQueue] = useState<boolean>(false);
   const [arcadeModifier, setArcadeModifier] = useState<ArcadeModifier>('low_g');
 
@@ -149,6 +151,8 @@ export default function App() {
     advancedPhysics: false,
     players: [],
     humanAlive: true,
+    humanSpeed: 0,
+    humanBounceChain: 0,
   });
 
   // Simulation refs decoupled from React 60Hz loop
@@ -168,6 +172,7 @@ export default function App() {
   const replayFramesRef = useRef<ReplayFrame[]>([]);
   const replaySampleAccumRef = useRef<number>(0);
   const hudSyncAccumRef = useRef<number>(0);
+  const physicsAccumRef = useRef<number>(0);
   const wsRef = useRef<WebSocket | null>(null);
   const spectatorRef = useRef<boolean>(false);
   const modalOpenRef = useRef<boolean>(false);
@@ -241,11 +246,14 @@ export default function App() {
         hasFlag: p.hasFlag,
       })),
       humanAlive: human ? human.alive || human.stocks > 0 : false,
+      humanSpeed: human ? Math.round(Math.hypot(human.vx, human.vy)) : 0,
+      humanBounceChain: human ? human.bounceChain : 0,
     };
   }, []);
 
   const startShowcaseMatch = useCallback(
     (mapToUse: ArenaMap) => {
+      physicsAccumRef.current = 0;
       const bots: PlayerSeed[] = [
         {
           id: 'show-1',
@@ -263,6 +271,7 @@ export default function App() {
           mode: 'classic',
           advancedPhysics: mapToUse.advancedPhysics,
           arcadeModifier: 'none',
+          physicsPreset: 'map_default',
           ranked: false,
           stocks: 99,
           timeLimitSec: 999,
@@ -318,6 +327,7 @@ export default function App() {
           mode: modeUse,
           advancedPhysics: advUse,
           arcadeModifier: modeUse === 'arcade' ? arcadeModifier : 'none',
+          physicsPreset,
           ranked: rankedQueue,
           stocks: modeUse === 'arcade' ? 2 : 3,
           timeLimitSec: modeUse === 'arcade' ? 75 : 120,
@@ -326,6 +336,7 @@ export default function App() {
         seeds
       );
 
+      physicsAccumRef.current = 0;
       matchRef.current = st;
       replayFramesRef.current = [];
       replaySampleAccumRef.current = 0;
@@ -337,7 +348,7 @@ export default function App() {
       setHud(buildSnapshot(st));
       setShellState('playing');
     },
-    [selectedMap, selectedMode, advancedPhysics, arcadeModifier, rankedQueue, buildSnapshot]
+    [selectedMap, selectedMode, advancedPhysics, physicsPreset, arcadeModifier, rankedQueue, buildSnapshot]
   );
 
   // Initialize showcase match + check ?autostart=1
@@ -521,10 +532,11 @@ export default function App() {
           }
         }
 
-        const events = stepMatch(st, dt, inputs);
+        const events = stepMatchFixed(st, dt, inputs, physicsAccumRef);
 
         if (currentShell === 'playing') {
-          if (events.jumps > 0) soundEngine.playJump();
+          if (events.bounceBoosts > 0) soundEngine.playBounceBoost();
+          else if (events.jumps > 0) soundEngine.playJump();
           if (events.shatters > 0) soundEngine.playShatter();
           if (events.captures > 0) soundEngine.playCapture();
           if (events.emotesFired > 0) soundEngine.playEmote();
@@ -575,17 +587,21 @@ export default function App() {
             camRef.current = { x: ARENA_WIDTH / 2, y: ARENA_HEIGHT / 2, zoom: 1 };
           }
 
-          // Throttle React HUD updates to discrete integer changes (~1Hz or on KO/score change)
+          // Throttle React HUD updates to meaningful state changes
           hudSyncAccumRef.current += dt;
-          if (hudSyncAccumRef.current >= 0.45) {
+          if (hudSyncAccumRef.current >= 0.18) {
             hudSyncAccumRef.current = 0;
             const nextSnap = buildSnapshot(st);
             setHud((prev) => {
               const prevSec = Math.floor(prev.timeRemaining);
               const nextSec = Math.floor(nextSnap.timeRemaining);
+              const speedBandChanged =
+                Math.round(prev.humanSpeed / 25) !== Math.round(nextSnap.humanSpeed / 25);
               const changed =
                 prevSec !== nextSec ||
                 prev.humanAlive !== nextSnap.humanAlive ||
+                prev.humanBounceChain !== nextSnap.humanBounceChain ||
+                speedBandChanged ||
                 prev.players.length !== nextSnap.players.length ||
                 prev.players.some(
                   (pp, idx) =>
@@ -899,6 +915,7 @@ export default function App() {
           selectedMapId={selectedMap.id}
           selectedMode={selectedMode}
           advancedPhysics={advancedPhysics}
+          physicsPreset={physicsPreset}
           rankedQueue={rankedQueue}
           arcadeModifier={arcadeModifier}
           activeRoom={activeRoom}
@@ -926,6 +943,7 @@ export default function App() {
               JSON.stringify({ type: 'lobby:update', advancedPhysics: val })
             );
           }}
+          onSelectPhysicsPreset={setPhysicsPreset}
           onToggleRanked={setRankedQueue}
           onSelectArcadeModifier={setArcadeModifier}
           onCreateLobby={handleCreateLobby}

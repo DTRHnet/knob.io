@@ -4,6 +4,7 @@ import {
   ArenaMap,
   GameMode,
   LobbyRoomSummary,
+  PhysicsPresetId,
   PlayerProfile,
 } from '../game/types';
 import { generateProceduralMap } from '../game/maps';
@@ -14,6 +15,7 @@ interface LobbyModalProps {
   selectedMapId: string;
   selectedMode: GameMode;
   advancedPhysics: boolean;
+  physicsPreset: PhysicsPresetId;
   rankedQueue: boolean;
   arcadeModifier: ArcadeModifier;
   activeRoom: LobbyRoomSummary | null;
@@ -21,6 +23,7 @@ interface LobbyModalProps {
   onSelectMap: (map: ArenaMap) => void;
   onSelectMode: (mode: GameMode) => void;
   onToggleAdvancedPhysics: (val: boolean) => void;
+  onSelectPhysicsPreset: (preset: PhysicsPresetId) => void;
   onToggleRanked: (val: boolean) => void;
   onSelectArcadeModifier: (mod: ArcadeModifier) => void;
   onCreateLobby: (opts: { isPrivate: boolean; name: string }) => Promise<void>;
@@ -39,6 +42,7 @@ export const LobbyModal: React.FC<LobbyModalProps> = ({
   selectedMapId,
   selectedMode,
   advancedPhysics,
+  physicsPreset,
   rankedQueue,
   arcadeModifier,
   activeRoom,
@@ -46,6 +50,7 @@ export const LobbyModal: React.FC<LobbyModalProps> = ({
   onSelectMap,
   onSelectMode,
   onToggleAdvancedPhysics,
+  onSelectPhysicsPreset,
   onToggleRanked,
   onSelectArcadeModifier,
   onCreateLobby,
@@ -202,6 +207,33 @@ export const LobbyModal: React.FC<LobbyModalProps> = ({
                     <option value="hyper_bounce">Modifier: Hyper Bounce</option>
                   </select>
                 )}
+              </div>
+
+              <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2 rounded-lg bg-[#0E131E] border border-white/8 px-3.5 py-2">
+                <span className="text-xs font-semibold text-slate-300">Physics Preset</span>
+                <div className="flex flex-wrap items-center gap-1">
+                  {(
+                    [
+                      ['map_default', 'Map Default'],
+                      ['standard', 'Standard'],
+                      ['low_gravity', 'Low Gravity'],
+                      ['high_momentum', 'High Momentum'],
+                    ] as const
+                  ).map(([pId, pLabel]) => (
+                    <button
+                      key={pId}
+                      type="button"
+                      onClick={() => onSelectPhysicsPreset(pId)}
+                      className={`px-2.5 py-1 rounded text-xs font-medium cursor-pointer whitespace-nowrap ${
+                        physicsPreset === pId
+                          ? 'bg-[#FF4D3D] text-white'
+                          : 'bg-[#141B29] text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      {pLabel}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
 

@@ -4,10 +4,13 @@ import { createMatchState } from '../game/physics';
 import { renderMatchCanvas } from '../game/renderer';
 import {
   ArenaMap,
+  DEFAULT_PHYSICS_CVARS,
   MapLayerVisibility,
   MapPlatform,
   MapTrigger,
   MapZone,
+  PHYSICS_PRESETS,
+  PhysicsCVars,
   SurfaceMaterial,
 } from '../game/types';
 
@@ -23,7 +26,9 @@ const MATERIALS: SurfaceMaterial[] = [
   'standard',
   'ice',
   'bouncy',
+  'super_bounce',
   'sticky',
+  'boost',
   'conveyor',
   'breakable',
   'soft',
@@ -78,6 +83,7 @@ export const MapEditor: React.FC<MapEditorProps> = ({
         mode: draft.recommendedMode,
         advancedPhysics: draft.advancedPhysics,
         arcadeModifier: 'none',
+        physicsPreset: 'map_default',
         ranked: false,
         stocks: 3,
         timeLimitSec: 120,
@@ -146,7 +152,14 @@ export const MapEditor: React.FC<MapEditorProps> = ({
         angle: 0,
         material: newMaterial,
         conveyorSpeed: newMaterial === 'conveyor' ? 210 : undefined,
-        bounciness: newMaterial === 'bouncy' ? 1.5 : undefined,
+        bounciness:
+          newMaterial === 'bouncy'
+            ? 1.3
+            : newMaterial === 'super_bounce'
+            ? 1.25
+            : undefined,
+        friction: newMaterial === 'ice' ? 0.02 : undefined,
+        boostImpulse: newMaterial === 'boost' ? 560 : undefined,
         breakableHp: newMaterial === 'breakable' ? 85 : undefined,
         active: true,
         tag: `plat-${draft.platforms.length + 1}`,
@@ -354,6 +367,76 @@ export const MapEditor: React.FC<MapEditorProps> = ({
           </label>
         </div>
 
+        {/* Physics CVars & Momentum Presets */}
+        <div className="rounded-lg bg-[#0E131E] border border-white/10 p-3.5 space-y-2.5">
+          <div className="flex items-center justify-between gap-2">
+            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-300">
+              Physics CVars
+            </h4>
+            <div className="flex items-center gap-1">
+              {(['standard', 'low_gravity', 'high_momentum'] as const).map((pid) => (
+                <button
+                  key={pid}
+                  type="button"
+                  onClick={() =>
+                    setDraft((p) => ({
+                      ...p,
+                      physicsOverrides: {
+                        ...DEFAULT_PHYSICS_CVARS,
+                        ...PHYSICS_PRESETS[pid],
+                      },
+                    }))
+                  }
+                  className="px-2 py-0.5 rounded bg-[#1A2233] hover:bg-[#253047] text-[10px] font-semibold text-cyan-200 cursor-pointer whitespace-nowrap"
+                >
+                  {pid === 'standard' ? 'Std' : pid === 'low_gravity' ? 'Low-G' : 'Hyper'}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-2 text-xs">
+            {(
+              [
+                ['sv_gravity', 'Gravity', 100, 2400, 20],
+                ['sv_jump_impulse', 'Jump Imp', 200, 1000, 10],
+                ['sv_bounce', 'Bounce (e)', 0, 1.5, 0.05],
+                ['sv_fastfall_multiplier', 'Fast-Fall x', 1, 4, 0.1],
+                ['sv_air_control', 'Air Control', 0.1, 1.5, 0.05],
+                ['sv_max_speed', 'Max Speed', 300, 1600, 20],
+                ['sv_jump_buffer', 'Jump Buf ms', 0, 300, 10],
+                ['sv_coyote_time', 'Coyote ms', 0, 300, 10],
+              ] as Array<[keyof PhysicsCVars, string, number, number, number]>
+            ).map(([key, label, min, max, step]) => {
+              const val = draft.physicsOverrides?.[key] ?? DEFAULT_PHYSICS_CVARS[key];
+              return (
+                <label key={key} className="flex flex-col gap-0.5 text-slate-400">
+                  {label}
+                  <input
+                    type="number"
+                    aria-label={label}
+                    value={val}
+                    min={min}
+                    max={max}
+                    step={step}
+                    onChange={(e) => {
+                      const num = Number(e.target.value);
+                      if (Number.isNaN(num)) return;
+                      setDraft((p) => ({
+                        ...p,
+                        physicsOverrides: {
+                          ...p.physicsOverrides,
+                          [key]: num,
+                        },
+                      }));
+                    }}
+                    className="bg-[#141B29] border border-white/12 rounded px-2 py-1 text-white font-mono"
+                  />
+                </label>
+              );
+            })}
+          </div>
+        </div>
+
         {/* Selected Platform Inspector */}
         {selectedPlat && (
           <div className="rounded-lg bg-[#0E131E] border border-white/10 p-3.5 space-y-2.5">
@@ -429,6 +512,62 @@ export const MapEditor: React.FC<MapEditorProps> = ({
                   className="bg-[#141B29] border border-white/12 rounded px-2 py-1 text-white font-mono"
                 />
               </label>
+
+              <label className="flex flex-col gap-1 text-slate-400">
+                Bounciness
+                <input
+                  type="number"
+                  aria-label="Surface Bounciness"
+                  step={0.05}
+                  min={0}
+                  max={2}
+                  placeholder="Auto"
+                  value={selectedPlat.bounciness ?? ''}
+                  onChange={(e) =>
+                    updateSelectedPlat({
+                      bounciness: e.target.value === '' ? undefined : Number(e.target.value),
+                    })
+                  }
+                  className="bg-[#141B29] border border-white/12 rounded px-2 py-1 text-white font-mono"
+                />
+              </label>
+
+              <label className="flex flex-col gap-1 text-slate-400">
+                Friction
+                <input
+                  type="number"
+                  aria-label="Surface Friction"
+                  step={0.02}
+                  min={0}
+                  max={1.5}
+                  placeholder="Auto"
+                  value={selectedPlat.friction ?? ''}
+                  onChange={(e) =>
+                    updateSelectedPlat({
+                      friction: e.target.value === '' ? undefined : Number(e.target.value),
+                    })
+                  }
+                  className="bg-[#141B29] border border-white/12 rounded px-2 py-1 text-white font-mono"
+                />
+              </label>
+
+              {selectedPlat.material === 'boost' && (
+                <label className="flex flex-col gap-1 text-slate-400 col-span-2">
+                  Boost Impulse (px/s)
+                  <input
+                    type="number"
+                    aria-label="Boost Impulse"
+                    step={20}
+                    min={-1200}
+                    max={1200}
+                    value={selectedPlat.boostImpulse ?? 560}
+                    onChange={(e) =>
+                      updateSelectedPlat({ boostImpulse: Number(e.target.value) || 560 })
+                    }
+                    className="bg-[#141B29] border border-white/12 rounded px-2 py-1 text-white font-mono"
+                  />
+                </label>
+              )}
             </div>
           </div>
         )}

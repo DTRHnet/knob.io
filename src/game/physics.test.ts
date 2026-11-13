@@ -4,7 +4,9 @@ import {
   computeRankTier,
   createMatchState,
   filterProfanity,
+  FIXED_PHYSICS_DT,
   stepMatch,
+  stepMatchFixed,
   updateMmr,
 } from './physics';
 import { BUILTIN_MAPS, generateProceduralMap } from './maps';
@@ -67,6 +69,7 @@ const BASE_CONFIG: MatchConfig = {
   mode: 'classic',
   advancedPhysics: false,
   arcadeModifier: 'none',
+  physicsPreset: 'map_default',
   ranked: false,
   stocks: 3,
   timeLimitSec: 120,
@@ -290,4 +293,161 @@ test('AI policies produce valid non-crashing inputs and profanity filter masks b
   assert.equal(mod.flagged, true);
   assert.equal(mod.clean, 'you are ***');
   assert.equal(computeRankTier(updateMmr(1440, true, 3)), 'Platinum');
+});
+
+test('variable gravity applies higher multiplier on early jump release and fast-fall, capped at sv_max_fall_speed', () => {
+  const map = makeTestMap();
+  const makeSolo = () =>
+    createMatchState(map, BASE_CONFIG, [
+      { id: 'p1', name: 'P1', isHuman: true, aiPolicy: 'brawler', team: 0, loadout: DEFAULT_LOADOUT },
+    ]);
+
+  // Early release vs held jump ascent
+  const heldState = makeSolo();
+  const earlyState = makeSolo();
+  heldState.players[0].y = 260;
+  heldState.players[0].vy = -420;
+  heldState.players[0].prevJumpHeld = true;
+  earlyState.players[0].y = 260;
+  earlyState.players[0].vy = -420;
+  earlyState.players[0].prevJumpHeld = true;
+
+  for (let i = 0; i < 12; i++) {
+    stepMatch(heldState, FIXED_PHYSICS_DT, { p1: { ...EMPTY_INPUT, up: true } });
+    stepMatch(earlyState, FIXED_PHYSICS_DT, { p1: EMPTY_INPUT });
+  }
+  assert.ok(
+    earlyState.players[0].vy > heldState.players[0].vy + 40,
+    `Expected early release downward delta (${earlyState.players[0].vy}) > held (${heldState.players[0].vy})`
+  );
+
+  // Fast-fall accelerates faster and caps at sv_max_fall_speed
+  const normalFall = makeSolo();
+  const fastFall = makeSolo();
+  normalFall.players[0].y = 120;
+  fastFall.players[0].y = 120;
+  for (let i = 0; i < 20; i++) {
+    stepMatch(normalFall, FIXED_PHYSICS_DT, { p1: EMPTY_INPUT });
+    stepMatch(fastFall, FIXED_PHYSICS_DT, { p1: { ...EMPTY_INPUT, down: true } });
+  }
+  assert.ok(fastFall.players[0].vy > normalFall.players[0].vy * 1.6);
+
+  // Terminal cap check
+  fastFall.players[0].y = -500;
+  for (let i = 0; i < 240; i++) {
+    stepMatch(fastFall, FIXED_PHYSICS_DT, { p1: { ...EMPTY_INPUT, down: true } });
+  }
+  assert.ok(fastFall.players[0].vy <= fastFall.cvars.sv_max_fall_speed + 0.01);
+});
+
+test('horizontal momentum is preserved across jump takeoff and landing', () => {
+  const map = makeTestMap({
+    platforms: [{ id: 'floor', x: 640, y: 500, w: 1000, h: 30, angle: 0, material: 'standard', active: true }],
+  });
+  const state = createMatchState(map, BASE_CONFIG, [
+    { id: 'p1', name: 'P1', isHuman: true, aiPolicy: 'brawler', team: 0, loadout: DEFAULT_LOADOUT },
+  ]);
+  state.players[0].x = 400;
+  state.players[0].y = 463;
+  state.players[0].vx = 520;
+  state.players[0].grounded = true;
+  state.players[0].coyoteTimer = 0.1;
+
+  // Jump while moving fast horizontally: vx must not drop to zero
+  const ev = stepMatch(state, FIXED_PHYSICS_DT, { p1: { ...EMPTY_INPUT, up: true } });
+  assert.equal(ev.jumps, 1);
+  assert.ok(state.players[0].vx > 500, `Expected preserved vx > 500 on jump, got ${state.players[0].vx}`);
+});
+
+test('impact-based bounce obeys restitution and super_bounce amplifies energy', () => {
+  const map = makeTestMap({
+    platforms: [
+      { id: 'std', x: 400, y: 500, w: 220, h: 24, angle: 0, material: 'standard', active: true },
+      { id: 'hyp', x: 840, y: 500, w: 220, h: 24, angle: 0, material: 'super_bounce', active: true },
+    ],
+  });
+  const state = createMatchState(map, BASE_CONFIG, [
+    { id: 'p1', name: 'Std', isHuman: true, aiPolicy: 'brawler', team: 0, loadout: DEFAULT_LOADOUT },
+    { id: 'p2', name: 'Hyp', isHuman: false, aiPolicy: 'acrobat', team: 0, loadout: DEFAULT_LOADOUT },
+  ]);
+  state.players[0].x = 400;
+  state.players[0].y = 464;
+  state.players[0].vy = 450;
+  state.players[1].x = 840;
+  state.players[1].y = 464;
+  state.players[1].vy = 450;
+
+  for (let i = 0; i < 4; i++) {
+    stepMatch(state, FIXED_PHYSICS_DT, { p1: EMPTY_INPUT, p2: EMPTY_INPUT });
+  }
+  // Standard should rebound upward (~0.78 * 450 = ~351)
+  assert.ok(state.players[0].vy < -280 && state.players[0].vy > -440, `Got std vy=${state.players[0].vy}`);
+  // Super bounce (e > 1) should amplify upward velocity above incoming speed
+  assert.ok(state.players[1].vy < -500, `Expected super_bounce vy < -500, got ${state.players[1].vy}`);
+});
+
+test('active bounce boosting adds jump impulse onto impact rebound and increments bounceChain', () => {
+  const map = makeTestMap();
+  const makePair = () =>
+    createMatchState(map, BASE_CONFIG, [
+      { id: 'p1', name: 'P1', isHuman: true, aiPolicy: 'brawler', team: 0, loadout: DEFAULT_LOADOUT },
+    ]);
+
+  const passive = makePair();
+  const active = makePair();
+  passive.players[0].x = 640;
+  passive.players[0].y = 460;
+  passive.players[0].vy = 420;
+  active.players[0].x = 640;
+  active.players[0].y = 460;
+  active.players[0].vy = 420;
+
+  // Press jump just before landing on active bounce instance
+  let activeBoostEvents = 0;
+  for (let i = 0; i < 5; i++) {
+    stepMatch(passive, FIXED_PHYSICS_DT, { p1: EMPTY_INPUT });
+    const ev = stepMatch(active, FIXED_PHYSICS_DT, {
+      p1: i === 0 ? { ...EMPTY_INPUT, up: true } : EMPTY_INPUT,
+    });
+    activeBoostEvents += ev.bounceBoosts;
+  }
+
+  assert.equal(activeBoostEvents, 1);
+  assert.equal(active.players[0].bounceChain, 1);
+  assert.ok(
+    active.players[0].vy < passive.players[0].vy - 250,
+    `Active bounce boost vy (${active.players[0].vy}) should exceed passive (${passive.players[0].vy})`
+  );
+});
+
+test('boost surface impulse, moving platform velocity transfer, map physicsOverrides, and fixed timestep work cleanly', () => {
+  const map = makeTestMap({
+    physicsOverrides: { sv_gravity: 500, sv_max_speed: 1200 },
+    platforms: [
+      { id: 'boost-pad', x: 400, y: 500, w: 300, h: 24, angle: 0, material: 'boost', boostImpulse: 680, active: true },
+      { id: 'mover', x: 840, y: 500, w: 240, h: 24, angle: 0, material: 'standard', moveAxis: 'x', moveRange: 100, moveSpeed: 2.0, active: true },
+    ],
+  });
+
+  const state = createMatchState(map, BASE_CONFIG, [
+    { id: 'p1', name: 'Booster', isHuman: true, aiPolicy: 'brawler', team: 0, loadout: DEFAULT_LOADOUT },
+    { id: 'p2', name: 'Rider', isHuman: false, aiPolicy: 'acrobat', team: 0, loadout: DEFAULT_LOADOUT },
+  ]);
+  assert.equal(state.cvars.sv_gravity, 500);
+  assert.equal(state.cvars.sv_max_speed, 1200);
+
+  state.players[0].x = 400;
+  state.players[0].y = 466;
+  state.players[0].vy = 40;
+  state.players[1].x = 840;
+  state.players[1].y = 466;
+  state.players[1].vy = 40;
+
+  const acc = { current: 0 };
+  for (let i = 0; i < 12; i++) {
+    stepMatchFixed(state, 1 / 60, { p1: EMPTY_INPUT, p2: EMPTY_INPUT }, acc);
+  }
+  assert.ok(state.players[0].vx > 450, `Expected boost pad vx > 450, got ${state.players[0].vx}`);
+  assert.ok(Math.abs(state.platforms[1].vx) > 50, 'Moving platform should track non-zero vx');
+  assert.ok(state.players[1].vx > 50, `Expected rider to inherit moving platform vx, got ${state.players[1].vx}`);
 });

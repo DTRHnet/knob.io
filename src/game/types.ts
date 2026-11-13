@@ -2,10 +2,73 @@ export type SurfaceMaterial =
   | 'standard'
   | 'ice'
   | 'bouncy'
+  | 'super_bounce'
   | 'sticky'
+  | 'boost'
   | 'conveyor'
   | 'breakable'
   | 'soft';
+
+export type PhysicsPresetId = 'map_default' | 'standard' | 'low_gravity' | 'high_momentum';
+
+export interface PhysicsCVars {
+  sv_gravity: number;
+  sv_jump_impulse: number;
+  sv_early_release_gravity: number;
+  sv_fall_gravity: number;
+  sv_fastfall_multiplier: number;
+  sv_max_fall_speed: number;
+  sv_bounce: number;
+  sv_air_control: number;
+  sv_ground_friction: number;
+  sv_air_friction: number;
+  sv_horizontal_accel: number;
+  sv_max_speed: number;
+  sv_jump_buffer: number; // ms
+  sv_coyote_time: number; // ms
+}
+
+export const DEFAULT_PHYSICS_CVARS: PhysicsCVars = {
+  sv_gravity: 980,
+  sv_jump_impulse: 540,
+  sv_early_release_gravity: 1.5,
+  sv_fall_gravity: 1.0,
+  sv_fastfall_multiplier: 2.0,
+  sv_max_fall_speed: 1400,
+  sv_bounce: 0.78,
+  sv_air_control: 0.65,
+  sv_ground_friction: 8.0,
+  sv_air_friction: 0.2,
+  sv_horizontal_accel: 1450,
+  sv_max_speed: 860,
+  sv_jump_buffer: 120,
+  sv_coyote_time: 100,
+};
+
+export const PHYSICS_PRESETS: Record<Exclude<PhysicsPresetId, 'map_default'>, Partial<PhysicsCVars>> = {
+  standard: {
+    sv_gravity: 980,
+    sv_bounce: 0.78,
+    sv_fastfall_multiplier: 2.0,
+    sv_air_control: 0.65,
+  },
+  low_gravity: {
+    sv_gravity: 340,
+    sv_jump_impulse: 410,
+    sv_bounce: 0.95,
+    sv_fastfall_multiplier: 2.4,
+    sv_air_control: 0.8,
+  },
+  high_momentum: {
+    sv_gravity: 1300,
+    sv_jump_impulse: 600,
+    sv_bounce: 1.02,
+    sv_fastfall_multiplier: 2.35,
+    sv_air_control: 0.78,
+    sv_max_speed: 1080,
+    sv_max_fall_speed: 1650,
+  },
+};
 
 export type ZoneType = 'gravity' | 'wind' | 'magnet';
 
@@ -66,7 +129,9 @@ export interface MapPlatform {
   angle: number; // radians
   material: SurfaceMaterial;
   conveyorSpeed?: number; // px/s along surface
-  bounciness?: number;
+  bounciness?: number; // optional restitution override
+  friction?: number; // optional surface friction override
+  boostImpulse?: number; // directional impulse for boost platforms
   breakableHp?: number;
   active?: boolean;
   tag?: string;
@@ -153,6 +218,7 @@ export interface ArenaMap {
   supportedModes: GameMode[];
   recommendedMode: GameMode;
   advancedPhysics: boolean;
+  physicsOverrides?: Partial<PhysicsCVars>;
   bounds: { width: number; height: number };
   bgStyle: 'slate_grid' | 'glacier' | 'forge' | 'reactor';
   platforms: MapPlatform[];
@@ -220,11 +286,16 @@ export interface PlayerState {
   calloutTimer: number;
   emoteCooldown: number;
   hasFlag: boolean;
+  bounceChain: number;
+  lastImpactSpeed: number;
+  activeBoostFlash: number;
 }
 
 export interface RuntimePlatform extends MapPlatform {
   baseX: number;
   baseY: number;
+  vx: number;
+  vy: number;
   hp: number;
   maxHp: number;
   respawnTimer: number;
@@ -312,6 +383,8 @@ export interface MatchConfig {
   mode: GameMode;
   advancedPhysics: boolean;
   arcadeModifier: ArcadeModifier;
+  physicsPreset: PhysicsPresetId;
+  customCVars?: Partial<PhysicsCVars>;
   ranked: boolean;
   stocks: number;
   timeLimitSec: number;
@@ -321,6 +394,7 @@ export interface MatchConfig {
 export interface MatchState {
   map: ArenaMap;
   config: MatchConfig;
+  cvars: PhysicsCVars;
   timeElapsed: number;
   timeRemaining: number;
   hitstopTimer: number;

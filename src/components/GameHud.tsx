@@ -19,6 +19,8 @@ export interface HudSnapshot {
     hasFlag: boolean;
   }>;
   humanAlive: boolean;
+  humanSpeed: number;
+  humanBounceChain: number;
 }
 
 interface GameHudProps {
@@ -84,6 +86,21 @@ export const GameHud: React.FC<GameHudProps> = ({
                   <span aria-hidden="true" className="hidden md:inline">·</span>
                   <span className="text-amber-400 hidden md:inline">{MODIFIER_NAME[hud.arcadeModifier]}</span>
                 </>
+              )}
+              <span aria-hidden="true" className="hidden sm:inline">·</span>
+              <span
+                className="font-mono tabular-nums text-cyan-300 hidden sm:inline"
+                title="Player Momentum Speed"
+              >
+                {hud.humanSpeed} u/s
+              </span>
+              {hud.humanBounceChain >= 1 && (
+                <span
+                  className="font-mono tabular-nums font-bold text-emerald-400 shrink-0"
+                  title="Active Bounce Chain"
+                >
+                  x{hud.humanBounceChain}
+                </span>
               )}
             </div>
           </div>

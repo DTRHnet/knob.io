@@ -108,6 +108,7 @@ export const StudioAndProfileModal: React.FC<StudioAndProfileModalProps> = ({
         mode: selectedReplay.mode,
         advancedPhysics: mapRef.advancedPhysics,
         arcadeModifier: 'none',
+        physicsPreset: 'map_default',
         ranked: false,
         stocks: 3,
         timeLimitSec: 120,

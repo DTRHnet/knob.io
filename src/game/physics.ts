@@ -3,9 +3,12 @@ import {
   AIPolicy,
   ArenaMap,
   CosmeticLoadout,
+  DEFAULT_PHYSICS_CVARS,
   MatchConfig,
   MatchState,
+  PHYSICS_PRESETS,
   Particle,
+  PhysicsCVars,
   PlayerInput,
   PlayerState,
   RankTier,
@@ -16,13 +19,9 @@ import {
   SurfaceMaterial,
 } from './types';
 
-export const BASE_GRAVITY = 1280;
+export const FIXED_PHYSICS_DT = 1 / 120; // 120 Hz deterministic fixed timestep
+export const BASE_GRAVITY = DEFAULT_PHYSICS_CVARS.sv_gravity;
 export const CIRCLE_RADIUS = 22;
-export const BASE_MOVE_ACCEL = 1520;
-export const AIR_MOVE_ACCEL = 1040;
-export const JUMP_VELOCITY = -565;
-export const COYOTE_TIME = 0.1; // 100ms coyote time
-export const JUMP_BUFFER_TIME = 0.12; // 120ms input buffering
 export const MAX_PARTICLES = 240;
 export const MAX_SHOCKWAVES = 24;
 
@@ -33,6 +32,27 @@ export interface PlayerSeed {
   aiPolicy: AIPolicy;
   team: 0 | 1 | 2;
   loadout: CosmeticLoadout;
+}
+
+export function resolvePhysicsCVars(map: ArenaMap, config: MatchConfig): PhysicsCVars {
+  const base: PhysicsCVars = { ...DEFAULT_PHYSICS_CVARS };
+  const mapPatch = map.physicsOverrides ?? {};
+  const presetPatch =
+    config.physicsPreset !== 'map_default' ? PHYSICS_PRESETS[config.physicsPreset] : {};
+  const customPatch = config.customCVars ?? {};
+
+  const merged: PhysicsCVars =
+    config.physicsPreset === 'map_default'
+      ? { ...base, ...mapPatch, ...customPatch }
+      : { ...base, ...mapPatch, ...presetPatch, ...customPatch };
+
+  if (config.arcadeModifier === 'low_g') {
+    merged.sv_gravity = Math.round(merged.sv_gravity * 0.56);
+  } else if (config.arcadeModifier === 'hyper_bounce') {
+    merged.sv_bounce = Number((merged.sv_bounce * 1.24).toFixed(2));
+  }
+
+  return merged;
 }
 
 export function createDefaultParticlePool(): Particle[] {
@@ -150,10 +170,14 @@ export function createMatchState(
   config: MatchConfig,
   seeds: PlayerSeed[]
 ): MatchState {
+  const cvars = resolvePhysicsCVars(map, config);
+
   const platforms: RuntimePlatform[] = map.platforms.map((p) => ({
     ...p,
     baseX: p.x,
     baseY: p.y,
+    vx: 0,
+    vy: 0,
     hp: p.breakableHp ?? 90,
     maxHp: p.breakableHp ?? 90,
     respawnTimer: 0,
@@ -178,8 +202,28 @@ export function createMatchState(
 
   if (config.arcadeModifier === 'bumper_chaos') {
     bumpers.push(
-      { id: 'arc-b1', x: 460, y: 270, radius: 22, impulse: 760, explosive: config.advancedPhysics, cooldown: 0.4, triggerTimer: 0, chainFlash: 0 },
-      { id: 'arc-b2', x: 820, y: 270, radius: 22, impulse: 760, explosive: config.advancedPhysics, cooldown: 0.4, triggerTimer: 0, chainFlash: 0 }
+      {
+        id: 'arc-b1',
+        x: 460,
+        y: 270,
+        radius: 22,
+        impulse: 760,
+        explosive: config.advancedPhysics,
+        cooldown: 0.4,
+        triggerTimer: 0,
+        chainFlash: 0,
+      },
+      {
+        id: 'arc-b2',
+        x: 820,
+        y: 270,
+        radius: 22,
+        impulse: 760,
+        explosive: config.advancedPhysics,
+        cooldown: 0.4,
+        triggerTimer: 0,
+        chainFlash: 0,
+      }
     );
   }
 
@@ -225,6 +269,9 @@ export function createMatchState(
       calloutTimer: 0,
       emoteCooldown: 0,
       hasFlag: false,
+      bounceChain: 0,
+      lastImpactSpeed: 0,
+      activeBoostFlash: 0,
     };
   });
 
@@ -234,6 +281,7 @@ export function createMatchState(
   return {
     map,
     config,
+    cvars,
     timeElapsed: 0,
     timeRemaining: config.timeLimitSec,
     hitstopTimer: 0,
@@ -266,25 +314,64 @@ export function createMatchState(
   };
 }
 
-function getMaterialProps(mat: SurfaceMaterial, hyperBounce: boolean) {
-  const bounceMult = hyperBounce ? 1.32 : 1.0;
+interface MaterialProps {
+  friction: number;
+  restitution: number;
+  accelScale: number;
+  minBounceVy: number;
+}
+
+function getMaterialProps(
+  mat: SurfaceMaterial,
+  globalBounce: number,
+  hyperBounce: boolean,
+  platOverride?: { bounciness?: number; friction?: number }
+): MaterialProps {
+  const bounceMult = hyperBounce ? 1.24 : 1.0;
+  let base: MaterialProps;
   switch (mat) {
     case 'ice':
-      return { friction: 0.015, restitution: 0.25 * bounceMult, accelScale: 0.42, minBounceVy: 0 };
+      base = { friction: 0.02, restitution: globalBounce * 0.75 * bounceMult, accelScale: 0.45, minBounceVy: 0 };
+      break;
     case 'bouncy':
-      return { friction: 0.16, restitution: 1.48 * bounceMult, accelScale: 1.0, minBounceVy: 620 * bounceMult };
+      base = { friction: 0.16, restitution: 1.28 * bounceMult, accelScale: 1.0, minBounceVy: 590 * bounceMult };
+      break;
+    case 'super_bounce':
+      base = {
+        friction: 0.14,
+        restitution: Math.max(1.22, globalBounce * 1.5) * bounceMult,
+        accelScale: 1.05,
+        minBounceVy: 720 * bounceMult,
+      };
+      break;
     case 'sticky':
-      return { friction: 0.88, restitution: 0.04, accelScale: 1.15, minBounceVy: 0 };
+      base = { friction: 0.92, restitution: 0.04, accelScale: 1.15, minBounceVy: 0 };
+      break;
+    case 'boost':
+      base = { friction: 0.08, restitution: globalBounce * 0.85 * bounceMult, accelScale: 1.18, minBounceVy: 0 };
+      break;
     case 'conveyor':
-      return { friction: 0.32, restitution: 0.18 * bounceMult, accelScale: 1.05, minBounceVy: 0 };
+      base = { friction: 0.34, restitution: globalBounce * 0.65 * bounceMult, accelScale: 1.05, minBounceVy: 0 };
+      break;
     case 'breakable':
-      return { friction: 0.24, restitution: 0.2 * bounceMult, accelScale: 1.0, minBounceVy: 0 };
+      base = { friction: 0.24, restitution: globalBounce * 0.72 * bounceMult, accelScale: 1.0, minBounceVy: 0 };
+      break;
     case 'soft':
-      return { friction: 0.22, restitution: 0.85 * bounceMult, accelScale: 0.9, minBounceVy: 340 * bounceMult };
+      base = { friction: 0.28, restitution: 0.24 * bounceMult, accelScale: 0.92, minBounceVy: 0 };
+      break;
     case 'standard':
     default:
-      return { friction: 0.22, restitution: 0.24 * bounceMult, accelScale: 1.0, minBounceVy: 0 };
+      base = { friction: 0.22, restitution: globalBounce * bounceMult, accelScale: 1.0, minBounceVy: 0 };
+      break;
   }
+
+  if (platOverride?.bounciness !== undefined) {
+    base.restitution = platOverride.bounciness * bounceMult;
+  }
+  if (platOverride?.friction !== undefined) {
+    base.friction = platOverride.friction;
+  }
+  return base;
 }
 
 function respawnPlayer(state: MatchState, p: PlayerState, index: number): void {
@@ -302,6 +389,9 @@ function respawnPlayer(state: MatchState, p: PlayerState, index: number): void {
   p.trail = [];
   p.squashX = 0.8;
   p.squashY = 1.25;
+  p.bounceChain = 0;
+  p.lastImpactSpeed = 0;
+  p.activeBoostFlash = 0;
   spawnShockwave(state, p.x, p.y, p.loadout.color, 55);
 }
 
@@ -346,10 +436,53 @@ export interface StepEvents {
   koEvents: Array<{ victimId: string; killerId: string | null }>;
   collisions: Array<{ intensity: number; heavy: boolean }>;
   jumps: number;
+  bounceBoosts: number;
   shatters: number;
   captures: number;
   triggersFired: number;
   emotesFired: number;
+}
+
+export function stepMatchFixed(
+  state: MatchState,
+  rawDt: number,
+  inputs: Record<string, PlayerInput>,
+  accumulatorRef: { current: number }
+): StepEvents {
+  const merged: StepEvents = {
+    koEvents: [],
+    collisions: [],
+    jumps: 0,
+    bounceBoosts: 0,
+    shatters: 0,
+    captures: 0,
+    triggersFired: 0,
+    emotesFired: 0,
+  };
+
+  const clampedDt = Math.min(Math.max(rawDt, 0), 0.05);
+  accumulatorRef.current += clampedDt;
+
+  let substeps = 0;
+  while (accumulatorRef.current >= FIXED_PHYSICS_DT && substeps < 8) {
+    const ev = stepMatch(state, FIXED_PHYSICS_DT, inputs);
+    merged.koEvents.push(...ev.koEvents);
+    merged.collisions.push(...ev.collisions);
+    merged.jumps += ev.jumps;
+    merged.bounceBoosts += ev.bounceBoosts;
+    merged.shatters += ev.shatters;
+    merged.captures += ev.captures;
+    merged.triggersFired += ev.triggersFired;
+    merged.emotesFired += ev.emotesFired;
+    accumulatorRef.current -= FIXED_PHYSICS_DT;
+    substeps++;
+  }
+
+  if (substeps >= 8 && accumulatorRef.current > FIXED_PHYSICS_DT * 2) {
+    accumulatorRef.current = 0;
+  }
+
+  return merged;
 }
 
 export function stepMatch(
@@ -361,6 +494,7 @@ export function stepMatch(
     koEvents: [],
     collisions: [],
     jumps: 0,
+    bounceBoosts: 0,
     shatters: 0,
     captures: 0,
     triggersFired: 0,
@@ -368,6 +502,7 @@ export function stepMatch(
   };
 
   const dt = Math.min(Math.max(rawDt, 0), 0.05);
+  const cv = state.cvars;
   state.trauma = Math.max(0, state.trauma - dt * 1.9);
 
   // Decay shockwaves and pooled particles even during hitstop
@@ -401,7 +536,10 @@ export function stepMatch(
   state.timeRemaining = Math.max(0, state.timeRemaining - dt);
 
   // Track halfway comeback eligibility
-  if (state.timeElapsed >= state.config.timeLimitSec * 0.45 && Object.keys(state.wasBehindAtHalfway).length === 0) {
+  if (
+    state.timeElapsed >= state.config.timeLimitSec * 0.45 &&
+    Object.keys(state.wasBehindAtHalfway).length === 0
+  ) {
     const maxStocks = Math.max(...state.players.map((pl) => pl.stocks));
     const maxObj = Math.max(...state.players.map((pl) => pl.objectiveScore));
     for (const pl of state.players) {
@@ -425,16 +563,19 @@ export function stepMatch(
     }
   }
 
-  // Update moving platforms, soft-body spring rebound, and breakable respawns
+  // Update moving platforms (with instantaneous velocity tracking), soft-body rebound, breakables
   for (const plat of state.platforms) {
+    const prevX = plat.x;
+    const prevY = plat.y;
     if (plat.moveAxis === 'x' && plat.moveRange && plat.moveSpeed) {
       plat.x = plat.baseX + Math.sin(state.timeElapsed * plat.moveSpeed) * plat.moveRange;
     } else if (plat.moveAxis === 'y' && plat.moveRange && plat.moveSpeed) {
       plat.y = plat.baseY + Math.sin(state.timeElapsed * plat.moveSpeed) * plat.moveRange;
     }
+    plat.vx = dt > 0 ? (plat.x - prevX) / dt : 0;
+    plat.vy = dt > 0 ? (plat.y - prevY) / dt : 0;
 
     if (plat.material === 'soft') {
-      // Spring-damper soft-body rebound
       const k = 115;
       const damp = 8.5;
       const accel = -k * plat.softDeflection - damp * plat.softVelocity;
@@ -478,9 +619,10 @@ export function stepMatch(
     state.hazardRiseY = Math.max(480, ARENA_HEIGHT + 35 - state.timeElapsed * 4.5);
   }
 
-  const gravityMult = state.config.arcadeModifier === 'low_g' ? 0.56 : 1.0;
   const heavyClashBoost = state.config.arcadeModifier === 'heavy_clash' ? 1.45 : 1.0;
   const hyperBounce = state.config.arcadeModifier === 'hyper_bounce';
+  const jumpBufferSec = Math.max(0, cv.sv_jump_buffer / 1000);
+  const coyoteSec = Math.max(0, cv.sv_coyote_time / 1000);
 
   // Step each player
   for (let i = 0; i < state.players.length; i++) {
@@ -492,6 +634,7 @@ export function stepMatch(
 
     if (p.hitFlashTimer > 0) p.hitFlashTimer = Math.max(0, p.hitFlashTimer - dt);
     if (p.invulnTimer > 0) p.invulnTimer = Math.max(0, p.invulnTimer - dt);
+    if (p.activeBoostFlash > 0) p.activeBoostFlash = Math.max(0, p.activeBoostFlash - dt);
     if (p.lastHitTimer > 0) {
       p.lastHitTimer = Math.max(0, p.lastHitTimer - dt);
       if (p.lastHitTimer <= 0) p.lastHitBy = null;
@@ -532,38 +675,39 @@ export function stepMatch(
     p.isHeavy = inp.heavy;
     p.mass = p.isHeavy ? 2.75 : 1.0;
 
-    // Input buffering & Coyote timers
+    // Input buffering & Coyote timers driven by CVars
     const jumpJustPressed = inp.up && !p.prevJumpHeld;
-    const jumpJustReleased = !inp.up && p.prevJumpHeld;
     p.prevJumpHeld = inp.up;
 
     if (jumpJustPressed) {
-      p.jumpBufferTimer = JUMP_BUFFER_TIME;
+      p.jumpBufferTimer = jumpBufferSec;
     } else {
       p.jumpBufferTimer = Math.max(0, p.jumpBufferTimer - dt);
     }
 
     if (p.grounded || p.onStickyWall) {
-      p.coyoteTimer = COYOTE_TIME;
+      p.coyoteTimer = coyoteSec;
     } else {
       p.coyoteTimer = Math.max(0, p.coyoteTimer - dt);
     }
 
-    // Variable jump cut for crisp platforming
-    if (jumpJustReleased && p.vy < -140) {
-      p.vy *= 0.48;
-    }
-
-    // Horizontal input & fast-fall
+    // Horizontal acceleration with air control & horizontal momentum preservation
     const dirX = (inp.right ? 1 : 0) - (inp.left ? 1 : 0);
-    const surfProps = getMaterialProps(p.lastSurfaceMaterial, hyperBounce);
-    const baseAccel = p.grounded ? BASE_MOVE_ACCEL * surfProps.accelScale : AIR_MOVE_ACCEL;
+    const surfProps = getMaterialProps(p.lastSurfaceMaterial, cv.sv_bounce, hyperBounce);
+    const moveAccel = p.grounded
+      ? cv.sv_horizontal_accel * surfProps.accelScale
+      : cv.sv_horizontal_accel * cv.sv_air_control;
     const heavyMoveScale = p.isHeavy ? 0.62 : 1.0;
 
-    p.vx += dirX * baseAccel * heavyMoveScale * dt;
-
-    if (inp.down && !p.grounded) {
-      p.vy += (p.isHeavy ? 1450 : 620) * dt;
+    if (dirX !== 0) {
+      // Allow adding acceleration up to sv_max_speed without erasing overspeed momentum from boosts/bounces
+      const sameDir = dirX * p.vx > 0;
+      if (!sameDir || Math.abs(p.vx) < cv.sv_max_speed) {
+        p.vx += dirX * moveAccel * heavyMoveScale * dt;
+        if (sameDir && Math.abs(p.vx) > cv.sv_max_speed) {
+          p.vx = dirX * cv.sv_max_speed;
+        }
+      }
     }
 
     // Environmental force zones (Wind, Gravity, Magnet)
@@ -611,16 +755,29 @@ export function stepMatch(
       }
     }
 
-    // Gravity (Heavy falls faster)
-    const heavyGrav = p.isHeavy ? 1.48 : 1.0;
-    p.vy += BASE_GRAVITY * gravityMult * localGravityScale * heavyGrav * dt;
+    // Variable Gravity Multipliers + Directional Fast-Fall (a_y = g + D * g_boost)
+    let stateGravMult = 1.0;
+    if (inp.down && !p.grounded) {
+      stateGravMult = cv.sv_fastfall_multiplier;
+    } else if (p.vy < 0) {
+      stateGravMult = inp.up ? 1.0 : cv.sv_early_release_gravity;
+    } else {
+      stateGravMult = cv.sv_fall_gravity;
+    }
 
-    // Execute buffered jump if within coyote window
+    const heavyGrav = p.isHeavy ? 1.42 : 1.0;
+    const effectiveGravity = cv.sv_gravity * localGravityScale * stateGravMult * heavyGrav;
+    p.vy += effectiveGravity * dt;
+
+    // Execute buffered jump if within coyote window (preserving horizontal vx!)
     if (p.jumpBufferTimer > 0 && p.coyoteTimer > 0) {
-      p.vy = JUMP_VELOCITY * (p.isHeavy ? 0.82 : 1.0);
+      const jumpSpeed = cv.sv_jump_impulse * (p.isHeavy ? 0.82 : 1.0);
+      p.vy = Math.min(p.vy, 0) - jumpSpeed;
+      if (p.vy < -jumpSpeed * 1.35) p.vy = -jumpSpeed * 1.35;
+
       if (p.onStickyWall && !p.grounded) {
         // Wall kick impulse away from sticky wall
-        p.vx += dirX !== 0 ? dirX * 160 : (p.x < ARENA_WIDTH / 2 ? 220 : -220);
+        p.vx += dirX !== 0 ? dirX * 180 : p.x < ARENA_WIDTH / 2 ? 240 : -240;
       }
       p.grounded = false;
       p.onStickyWall = false;
@@ -632,11 +789,18 @@ export function stepMatch(
       spawnBurst(state, p.x, p.y + p.radius, p.loadout.color, 5, 110);
     }
 
-    // Air drag (ice preserves glide; normal clamps max runaway)
-    const airDrag = p.grounded && p.lastSurfaceMaterial === 'ice' ? 0.12 : p.grounded ? 2.4 : 0.72;
-    p.vx *= Math.max(0, 1 - airDrag * dt);
-    p.vy = Math.max(-1100, Math.min(1150, p.vy));
-    p.vx = Math.max(-980, Math.min(980, p.vx));
+    // Drag & velocity caps (air preserves momentum via low sv_air_friction; ground applies surface friction when coasting)
+    if (!p.grounded) {
+      p.vx *= Math.max(0, 1 - cv.sv_air_friction * dt);
+    } else if (dirX === 0) {
+      const coastScale = p.lastSurfaceMaterial === 'ice' ? 0.025 : surfProps.friction * 0.45;
+      p.vx *= Math.max(0, 1 - cv.sv_ground_friction * coastScale * dt);
+    }
+
+    const maxFall = cv.sv_max_fall_speed * (p.isHeavy ? 1.15 : 1.0);
+    const maxSpeedCeil = Math.max(cv.sv_max_speed * 1.55, 1400);
+    p.vy = Math.max(-1450, Math.min(maxFall, p.vy));
+    p.vx = Math.max(-maxSpeedCeil, Math.min(maxSpeedCeil, p.vx));
 
     // Integrate position
     p.x += p.vx * dt;
@@ -658,25 +822,37 @@ export function stepMatch(
       const hit = solveCircleOBB(p, plat.x, plat.y, plat.w, plat.h, plat.angle);
       if (!hit) continue;
 
-      const matProps = getMaterialProps(plat.material, hyperBounce);
-      const impactSpeed = -(p.vx * hit.nx + p.vy * hit.ny);
+      const matProps = getMaterialProps(plat.material, cv.sv_bounce, hyperBounce, {
+        bounciness: plat.bounciness,
+        friction: plat.friction,
+      });
+
+      // Relative velocity against moving platform
+      const relVx = p.vx - plat.vx;
+      const relVy = p.vy - plat.vy;
+      const impactSpeed = -(relVx * hit.nx + relVy * hit.ny);
 
       // Push out of overlap
       p.x += hit.nx * hit.penetration;
       p.y += hit.ny * hit.penetration;
 
       // Ground / wall classification
-      if (hit.ny < -0.52) {
-        p.grounded = true;
+      const isTopSupport = hit.ny < -0.52;
+      if (isTopSupport) {
         p.lastSurfaceMaterial = plat.material;
         if (impactSpeed > 180) {
           p.squashX = 1.22;
           p.squashY = 0.78;
         }
+        // Moving platform displacement transfer
+        if (plat.vx !== 0 || plat.vy !== 0) {
+          p.x += plat.vx * dt;
+          p.y += plat.vy * dt;
+        }
       } else if (plat.material === 'sticky' && Math.abs(hit.nx) > 0.65) {
         p.onStickyWall = true;
         p.lastSurfaceMaterial = 'sticky';
-        p.vy *= 0.65; // cling slow-slide
+        p.vy *= 0.65;
       }
 
       // Soft-body platform deflection
@@ -709,47 +885,120 @@ export function stepMatch(
         }
       }
 
-      // Normal impulse & bounce
+      // Impact-Based Bounce + Active Bounce Boosting + Clean Resting Settle
       if (impactSpeed > 0) {
-        const rest = p.isHeavy && plat.material !== 'bouncy' ? matProps.restitution * 0.45 : matProps.restitution;
-        p.vx += hit.nx * impactSpeed * (1 + rest);
-        p.vy += hit.ny * impactSpeed * (1 + rest);
-
-        if (plat.material === 'bouncy' && hit.ny < -0.45) {
-          const launch = Math.max(Math.abs(p.vy), matProps.minBounceVy);
-          p.vy = -launch;
-          p.squashX = 0.76;
-          p.squashY = 1.28;
-          spawnBurst(state, p.x, p.y + p.radius, '#fb923c', 7, 160);
+        let rest = matProps.restitution;
+        if (p.isHeavy && plat.material !== 'bouncy' && plat.material !== 'super_bounce') {
+          rest *= 0.35;
         }
+
+        const isAlwaysBounceMat = plat.material === 'bouncy' || plat.material === 'super_bounce';
+        const canActiveBounceBoost =
+          impactSpeed > 140 && hit.ny < -0.35 && p.jumpBufferTimer > 0 && plat.material !== 'sticky';
+
+        if (canActiveBounceBoost) {
+          // Active Bounce Boost: v_new = e * |v_impact| + J
+          const boostJ = cv.sv_jump_impulse * 0.72 * (p.isHeavy ? 0.7 : 1.0);
+          const reboundSpeed = Math.max(rest * impactSpeed + boostJ, matProps.minBounceVy);
+          p.vx += hit.nx * (impactSpeed + reboundSpeed);
+          p.vy += hit.ny * (impactSpeed + reboundSpeed);
+
+          // Inherit moving platform horizontal velocity on active bounce takeoff
+          if (isTopSupport && plat.vx !== 0) {
+            p.vx += plat.vx * 0.55;
+          }
+
+          p.grounded = false;
+          p.coyoteTimer = 0;
+          p.jumpBufferTimer = 0;
+          p.bounceChain += 1;
+          p.lastImpactSpeed = Math.round(impactSpeed);
+          p.activeBoostFlash = 0.3;
+          p.squashX = 0.72;
+          p.squashY = 1.32;
+          events.jumps += 1;
+          events.bounceBoosts += 1;
+          events.collisions.push({ intensity: reboundSpeed, heavy: false });
+          spawnShockwave(state, p.x, p.y + p.radius, '#34d399', 54);
+          spawnBurst(state, p.x, p.y + p.radius, '#a7f3d0', 10, 210, 'spark');
+        } else if (impactSpeed > 135 || isAlwaysBounceMat) {
+          // Passive Impact Restitution Bounce: v_after = -e * v_before
+          const reboundSpeed = Math.max(rest * impactSpeed, matProps.minBounceVy);
+          p.vx += hit.nx * (impactSpeed + reboundSpeed);
+          p.vy += hit.ny * (impactSpeed + reboundSpeed);
+          p.lastImpactSpeed = Math.round(impactSpeed);
+
+          if (isAlwaysBounceMat && hit.ny < -0.35) {
+            p.grounded = false;
+            p.bounceChain += 1;
+            p.squashX = 0.76;
+            p.squashY = 1.28;
+            const burstColor = plat.material === 'super_bounce' ? '#c084fc' : '#fb923c';
+            spawnBurst(state, p.x, p.y + p.radius, burstColor, 7, 160);
+          } else if (reboundSpeed > 135 && hit.ny < -0.35) {
+            // Genuine momentum rebound off standard/ice surfaces
+            p.grounded = false;
+            p.squashX = 1.15;
+            p.squashY = 0.85;
+            events.collisions.push({ intensity: impactSpeed, heavy: p.isHeavy });
+          } else if (isTopSupport) {
+            p.grounded = true;
+            p.bounceChain = 0;
+          }
+        } else {
+          // Below bounce settle threshold: cancel normal penetration and stand cleanly
+          p.vx += hit.nx * impactSpeed;
+          p.vy += hit.ny * impactSpeed;
+          if (isTopSupport) {
+            p.grounded = true;
+            p.bounceChain = 0;
+            // Gently transfer moving platform horizontal velocity when standing on it
+            if (plat.vx !== 0 && dirX === 0) {
+              p.vx += (plat.vx - p.vx) * Math.min(1, dt * 12);
+            }
+          }
+        }
+      } else if (isTopSupport) {
+        p.grounded = true;
       }
 
-      // Tangential friction & Conveyor belt velocity
+      // Tangential friction, Conveyor belt velocity, and Boost pad impulse
       const tx = -hit.ny;
       const ty = hit.nx;
-      const vTang = p.vx * tx + p.vy * ty;
+      const vTangRel = (p.vx - plat.vx) * tx + (p.vy - plat.vy) * ty;
       if (plat.material === 'conveyor' && plat.conveyorSpeed) {
-        const delta = (plat.conveyorSpeed - vTang) * Math.min(1, dt * 11);
+        const delta = (plat.conveyorSpeed - vTangRel) * Math.min(1, dt * 11);
         p.vx += tx * delta;
         p.vy += ty * delta;
-      } else {
+      } else if (plat.material === 'boost') {
+        const targetImpulse = plat.boostImpulse ?? 560;
+        const boostDir = targetImpulse >= 0 ? 1 : -1;
+        if (vTangRel * boostDir < Math.abs(targetImpulse)) {
+          const boostDelta = targetImpulse - vTangRel;
+          p.vx += tx * boostDelta * Math.min(1, dt * 26);
+          p.vy += ty * boostDelta * Math.min(1, dt * 26);
+          p.activeBoostFlash = Math.max(p.activeBoostFlash, 0.16);
+          if (Math.abs(boostDelta) > 120) {
+            spawnBurst(state, p.x, p.y + p.radius, '#34d399', 4, 140, 'spark');
+          }
+        }
+      } else if (dirX === 0) {
         const frictionScale = matProps.friction;
-        p.vx -= tx * vTang * Math.min(1, frictionScale * dt * 14);
-        p.vy -= ty * vTang * Math.min(1, frictionScale * dt * 14);
+        const damp = Math.min(1, frictionScale * cv.sv_ground_friction * dt * 1.4);
+        p.vx -= tx * vTangRel * damp;
+        p.vy -= ty * vTangRel * damp;
       }
     }
 
     // Solve rotating joints (Advanced Physics)
     if (state.config.advancedPhysics) {
       for (const joint of state.joints) {
-        // Rotating bar centered at joint.x, joint.y
         const hit = solveCircleOBB(p, joint.x, joint.y, joint.length * 2, joint.thickness, joint.angle);
         if (hit) {
           p.x += hit.nx * hit.penetration;
           p.y += hit.ny * hit.penetration;
           const rx = p.x - joint.x;
           const ry = p.y - joint.y;
-          // Tangential velocity of rotating arm at contact point
           const armVx = -joint.angularSpeed * ry;
           const armVy = joint.angularSpeed * rx;
           const relVx = p.vx - armVx;
@@ -800,7 +1049,6 @@ export function stepMatch(
                   other.triggerTimer = other.cooldown;
                   other.chainFlash = 0.35;
                   spawnShockwave(state, other.x, other.y, '#f43f5e', 120);
-                  // Apply blast impulse to all nearby players
                   for (const pl of state.players) {
                     if (!pl.alive) continue;
                     const pdx = pl.x - other.x;
@@ -828,7 +1076,6 @@ export function stepMatch(
     for (let j = i + 1; j < state.players.length; j++) {
       const b = state.players[j];
       if (!b.alive) continue;
-      // Skip friendly fire knockback in team CTF/2v2 if same non-zero team
       const sameTeam = a.team !== 0 && a.team === b.team;
 
       const dx = b.x - a.x;
@@ -842,7 +1089,6 @@ export function stepMatch(
       const overlap = minDist - dist;
       const totalMass = a.mass + b.mass;
 
-      // Positional separation weighted by inverse mass
       a.x -= nx * overlap * (b.mass / totalMass);
       a.y -= ny * overlap * (b.mass / totalMass);
       b.x += nx * overlap * (a.mass / totalMass);
@@ -863,7 +1109,6 @@ export function stepMatch(
       b.vx += ix / b.mass;
       b.vy += iy / b.mass;
 
-      // Extra bonk knockback pop when heavy slams light
       const impactIntensity = Math.abs(velAlongNormal);
       if (!sameTeam && impactIntensity > 190) {
         a.lastHitBy = b.id;
@@ -887,7 +1132,6 @@ export function stepMatch(
           spawnShockwave(state, cx, cy, '#ffffff', 68);
           spawnBurst(state, cx, cy, '#fbbf24', 14, 300, 'spark');
 
-          // Drop CTF flag on heavy hit
           if (state.config.mode === 'ctf') {
             if (a.hasFlag) {
               a.hasFlag = false;
@@ -924,7 +1168,7 @@ export function stepMatch(
         state.winReason = 'Hill Captured (100%)';
       }
     } else if (inside.length > 1) {
-      state.kothOwnerId = null; // Contested
+      state.kothOwnerId = null;
     } else {
       state.kothOwnerId = null;
     }
@@ -961,8 +1205,7 @@ export function stepMatch(
         state.flagCarrierId = null;
       }
     } else {
-      // Flag physics when dropped
-      state.flagVy += BASE_GRAVITY * 0.55 * dt;
+      state.flagVy += cv.sv_gravity * 0.55 * dt;
       state.flagX += state.flagVx * dt;
       state.flagY += state.flagVy * dt;
       state.flagVx *= Math.max(0, 1 - 2.5 * dt);
@@ -978,7 +1221,6 @@ export function stepMatch(
           state.flagVx *= 0.8;
         }
       }
-      // Reset flag if it falls out of bounds
       if (state.flagY > ARENA_HEIGHT + 80) {
         const origFlag = state.map.objectives.find((o) => o.type === 'ctf_flag');
         state.flagX = origFlag?.x ?? ARENA_WIDTH / 2;
@@ -986,7 +1228,6 @@ export function stepMatch(
         state.flagVx = 0;
         state.flagVy = 0;
       }
-      // Pickup check
       for (const p of state.players) {
         if (!p.alive || p.invulnTimer > 0.8) continue;
         if (Math.hypot(p.x - state.flagX, p.y - state.flagY) <= p.radius + 22) {
@@ -1018,6 +1259,7 @@ export function stepMatch(
       p.deaths += 1;
       p.stocks = Math.max(0, p.stocks - 1);
       p.respawnTimer = 1.45;
+      p.bounceChain = 0;
       if (p.hasFlag) {
         p.hasFlag = false;
         state.flagCarrierId = null;
@@ -1121,7 +1363,6 @@ function solveCircleOBB(
     lny = distY / dist;
     penetration = p.radius - dist;
   } else {
-    // Center is inside rectangle: push out via shallowest axis
     const penLeft = localX + halfW;
     const penRight = halfW - localX;
     const penTop = localY + halfH;
