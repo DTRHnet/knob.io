@@ -334,14 +334,14 @@ function getMaterialProps(
       base = { friction: 0.02, restitution: globalBounce * 0.75 * bounceMult, accelScale: 0.45, minBounceVy: 0 };
       break;
     case 'bouncy':
-      base = { friction: 0.16, restitution: 1.28 * bounceMult, accelScale: 1.0, minBounceVy: 590 * bounceMult };
+      base = { friction: 0.16, restitution: 1.18 * bounceMult, accelScale: 1.0, minBounceVy: 360 * bounceMult };
       break;
     case 'super_bounce':
       base = {
         friction: 0.14,
-        restitution: Math.max(1.22, globalBounce * 1.5) * bounceMult,
+        restitution: Math.max(1.22, globalBounce * 2.6) * bounceMult,
         accelScale: 1.05,
-        minBounceVy: 720 * bounceMult,
+        minBounceVy: 460 * bounceMult,
       };
       break;
     case 'sticky':
@@ -798,8 +798,8 @@ export function stepMatch(
     }
 
     const maxFall = cv.sv_max_fall_speed * (p.isHeavy ? 1.15 : 1.0);
-    const maxSpeedCeil = Math.max(cv.sv_max_speed * 1.55, 1400);
-    p.vy = Math.max(-1450, Math.min(maxFall, p.vy));
+    const maxSpeedCeil = Math.max(cv.sv_max_speed * 2.1, 880);
+    p.vy = Math.max(-960, Math.min(maxFall, p.vy));
     p.vx = Math.max(-maxSpeedCeil, Math.min(maxSpeedCeil, p.vx));
 
     // Integrate position
@@ -893,12 +893,13 @@ export function stepMatch(
         }
 
         const isAlwaysBounceMat = plat.material === 'bouncy' || plat.material === 'super_bounce';
+        const settleThreshold = Math.min(115, Math.max(70, cv.sv_jump_impulse * 0.3));
         const canActiveBounceBoost =
-          impactSpeed > 140 && hit.ny < -0.35 && p.jumpBufferTimer > 0 && plat.material !== 'sticky';
+          impactSpeed > settleThreshold && hit.ny < -0.35 && p.jumpBufferTimer > 0 && plat.material !== 'sticky';
 
         if (canActiveBounceBoost) {
           // Active Bounce Boost: v_new = e * |v_impact| + J
-          const boostJ = cv.sv_jump_impulse * 0.72 * (p.isHeavy ? 0.7 : 1.0);
+          const boostJ = cv.sv_jump_impulse * 0.68 * (p.isHeavy ? 0.7 : 1.0);
           const reboundSpeed = Math.max(rest * impactSpeed + boostJ, matProps.minBounceVy);
           p.vx += hit.nx * (impactSpeed + reboundSpeed);
           p.vy += hit.ny * (impactSpeed + reboundSpeed);
@@ -921,7 +922,7 @@ export function stepMatch(
           events.collisions.push({ intensity: reboundSpeed, heavy: false });
           spawnShockwave(state, p.x, p.y + p.radius, '#34d399', 54);
           spawnBurst(state, p.x, p.y + p.radius, '#a7f3d0', 10, 210, 'spark');
-        } else if (impactSpeed > 135 || isAlwaysBounceMat) {
+        } else if (impactSpeed > settleThreshold || isAlwaysBounceMat) {
           // Passive Impact Restitution Bounce: v_after = -e * v_before
           const reboundSpeed = Math.max(rest * impactSpeed, matProps.minBounceVy);
           p.vx += hit.nx * (impactSpeed + reboundSpeed);
@@ -935,7 +936,7 @@ export function stepMatch(
             p.squashY = 1.28;
             const burstColor = plat.material === 'super_bounce' ? '#c084fc' : '#fb923c';
             spawnBurst(state, p.x, p.y + p.radius, burstColor, 7, 160);
-          } else if (reboundSpeed > 135 && hit.ny < -0.35) {
+          } else if (reboundSpeed > settleThreshold && hit.ny < -0.35) {
             // Genuine momentum rebound off standard/ice surfaces
             p.grounded = false;
             p.squashX = 1.15;
@@ -971,15 +972,15 @@ export function stepMatch(
         p.vx += tx * delta;
         p.vy += ty * delta;
       } else if (plat.material === 'boost') {
-        const targetImpulse = plat.boostImpulse ?? 560;
+        const targetImpulse = plat.boostImpulse ?? 320;
         const boostDir = targetImpulse >= 0 ? 1 : -1;
         if (vTangRel * boostDir < Math.abs(targetImpulse)) {
           const boostDelta = targetImpulse - vTangRel;
-          p.vx += tx * boostDelta * Math.min(1, dt * 26);
-          p.vy += ty * boostDelta * Math.min(1, dt * 26);
+          p.vx += tx * boostDelta * Math.min(1, dt * 14);
+          p.vy += ty * boostDelta * Math.min(1, dt * 14);
           p.activeBoostFlash = Math.max(p.activeBoostFlash, 0.16);
-          if (Math.abs(boostDelta) > 120) {
-            spawnBurst(state, p.x, p.y + p.radius, '#34d399', 4, 140, 'spark');
+          if (Math.abs(boostDelta) > 90) {
+            spawnBurst(state, p.x, p.y + p.radius, '#34d399', 4, 120, 'spark');
           }
         }
       } else if (dirX === 0) {
@@ -1099,7 +1100,7 @@ export function stepMatch(
       const velAlongNormal = rvx * nx + rvy * ny;
       if (velAlongNormal > 0) continue;
 
-      const restitution = sameTeam ? 0.5 : (a.isHeavy || b.isHeavy ? 1.18 : 1.04) * heavyClashBoost;
+      const restitution = sameTeam ? 0.45 : (a.isHeavy || b.isHeavy ? 1.12 : 0.96) * heavyClashBoost;
       const jImpulse = (-(1 + restitution) * velAlongNormal) / (1 / a.mass + 1 / b.mass);
 
       const ix = jImpulse * nx;

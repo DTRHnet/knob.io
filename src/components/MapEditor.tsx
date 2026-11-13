@@ -154,12 +154,12 @@ export const MapEditor: React.FC<MapEditorProps> = ({
         conveyorSpeed: newMaterial === 'conveyor' ? 210 : undefined,
         bounciness:
           newMaterial === 'bouncy'
-            ? 1.3
+            ? 1.18
             : newMaterial === 'super_bounce'
             ? 1.25
             : undefined,
         friction: newMaterial === 'ice' ? 0.02 : undefined,
-        boostImpulse: newMaterial === 'boost' ? 560 : undefined,
+        boostImpulse: newMaterial === 'boost' ? 320 : undefined,
         breakableHp: newMaterial === 'breakable' ? 85 : undefined,
         active: true,
         tag: `plat-${draft.platforms.length + 1}`,
@@ -397,12 +397,12 @@ export const MapEditor: React.FC<MapEditorProps> = ({
           <div className="grid grid-cols-2 gap-2 text-xs">
             {(
               [
-                ['sv_gravity', 'Gravity', 100, 2400, 20],
-                ['sv_jump_impulse', 'Jump Imp', 200, 1000, 10],
+                ['sv_gravity', 'Gravity', 100, 2000, 20],
+                ['sv_jump_impulse', 'Jump Imp', 120, 900, 10],
                 ['sv_bounce', 'Bounce (e)', 0, 1.5, 0.05],
                 ['sv_fastfall_multiplier', 'Fast-Fall x', 1, 4, 0.1],
                 ['sv_air_control', 'Air Control', 0.1, 1.5, 0.05],
-                ['sv_max_speed', 'Max Speed', 300, 1600, 20],
+                ['sv_max_speed', 'Max Speed', 150, 1400, 20],
                 ['sv_jump_buffer', 'Jump Buf ms', 0, 300, 10],
                 ['sv_coyote_time', 'Coyote ms', 0, 300, 10],
               ] as Array<[keyof PhysicsCVars, string, number, number, number]>

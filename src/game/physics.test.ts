@@ -100,7 +100,7 @@ test('coyote time allows jump shortly after walking off ledge', () => {
   // Now press jump while airborne inside coyote window
   const ev = stepMatch(state, 0.016, { p1: { ...EMPTY_INPUT, up: true }, p2: EMPTY_INPUT });
   assert.equal(ev.jumps, 1);
-  assert.ok(state.players[0].vy < -400);
+  assert.ok(state.players[0].vy < -250);
 });
 
 test('input buffering executes jump on first landing frame', () => {
@@ -124,7 +124,7 @@ test('input buffering executes jump on first landing frame', () => {
     totalJumps += ev.jumps;
   }
   assert.equal(totalJumps, 1);
-  assert.ok(state.players[0].vy < -300);
+  assert.ok(state.players[0].vy < -250);
 });
 
 test('ice material glides significantly further than sticky material', () => {
@@ -168,7 +168,7 @@ test('bouncy, conveyor, breakable, and soft platforms alter physics distinctly',
   bState.players[0].vy = 220;
   stepMatch(bState, 0.016, { p1: EMPTY_INPUT, p2: EMPTY_INPUT });
   stepMatch(bState, 0.016, { p1: EMPTY_INPUT, p2: EMPTY_INPUT });
-  assert.ok(bState.players[0].vy < -500);
+  assert.ok(bState.players[0].vy < -310);
 
   // Conveyor belt pushes resting circle
   const convMap = makeTestMap({
@@ -312,7 +312,7 @@ test('variable gravity applies higher multiplier on early jump release and fast-
   earlyState.players[0].vy = -420;
   earlyState.players[0].prevJumpHeld = true;
 
-  for (let i = 0; i < 12; i++) {
+  for (let i = 0; i < 24; i++) {
     stepMatch(heldState, FIXED_PHYSICS_DT, { p1: { ...EMPTY_INPUT, up: true } });
     stepMatch(earlyState, FIXED_PHYSICS_DT, { p1: EMPTY_INPUT });
   }
@@ -380,10 +380,10 @@ test('impact-based bounce obeys restitution and super_bounce amplifies energy', 
   for (let i = 0; i < 4; i++) {
     stepMatch(state, FIXED_PHYSICS_DT, { p1: EMPTY_INPUT, p2: EMPTY_INPUT });
   }
-  // Standard should rebound upward (~0.78 * 450 = ~351)
-  assert.ok(state.players[0].vy < -280 && state.players[0].vy > -440, `Got std vy=${state.players[0].vy}`);
+  // Standard should rebound upward (~0.42 * 450 = ~189)
+  assert.ok(state.players[0].vy < -140 && state.players[0].vy > -260, `Got std vy=${state.players[0].vy}`);
   // Super bounce (e > 1) should amplify upward velocity above incoming speed
-  assert.ok(state.players[1].vy < -500, `Expected super_bounce vy < -500, got ${state.players[1].vy}`);
+  assert.ok(state.players[1].vy < -480, `Expected super_bounce vy < -480, got ${state.players[1].vy}`);
 });
 
 test('active bounce boosting adds jump impulse onto impact rebound and increments bounceChain', () => {
@@ -415,7 +415,7 @@ test('active bounce boosting adds jump impulse onto impact rebound and increment
   assert.equal(activeBoostEvents, 1);
   assert.equal(active.players[0].bounceChain, 1);
   assert.ok(
-    active.players[0].vy < passive.players[0].vy - 250,
+    active.players[0].vy < passive.players[0].vy - 180,
     `Active bounce boost vy (${active.players[0].vy}) should exceed passive (${passive.players[0].vy})`
   );
 });
