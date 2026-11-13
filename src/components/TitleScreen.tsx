@@ -121,7 +121,7 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
 
       {/* Single flat borderless control hint in bottom safe margin */}
       <div className="relative z-10 px-6 sm:px-12 lg:px-16 pb-5 text-xs text-slate-400 font-mono tracking-tight">
-        WASD / Arrows Move · Space / Up Jump · Shift / X Heavy · E Emote · Esc Pause
+        WASD / Arrows Move · Space / Up Jump & Double Jump · Q/F or Mouse Spin/Aim Knob · Shift / X Heavy · E Emote
       </div>
     </div>
   );

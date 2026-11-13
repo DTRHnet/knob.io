@@ -153,6 +153,8 @@ export default function App() {
     humanAlive: true,
     humanSpeed: 0,
     humanBounceChain: 0,
+    humanMass: 1,
+    humanAirJumps: 1,
   });
 
   // Simulation refs decoupled from React 60Hz loop
@@ -167,6 +169,13 @@ export default function App() {
     down: false,
     heavy: false,
     emote: false,
+    spinLeft: false,
+    spinRight: false,
+  });
+  const pointerAimRef = useRef<{ arenaX: number; arenaY: number; activeUntil: number }>({
+    arenaX: ARENA_WIDTH / 2,
+    arenaY: ARENA_HEIGHT / 2,
+    activeUntil: 0,
   });
   const camRef = useRef<CameraView>({ x: ARENA_WIDTH / 2, y: ARENA_HEIGHT / 2, zoom: 1 });
   const replayFramesRef = useRef<ReplayFrame[]>([]);
@@ -248,6 +257,8 @@ export default function App() {
       humanAlive: human ? human.alive || human.stocks > 0 : false,
       humanSpeed: human ? Math.round(Math.hypot(human.vx, human.vy)) : 0,
       humanBounceChain: human ? human.bounceChain : 0,
+      humanMass: human ? human.mass : 1,
+      humanAirJumps: human ? human.airJumpsRemaining : 0,
     };
   }, []);
 
@@ -500,6 +511,9 @@ export default function App() {
             let gpRight = false;
             let gpJump = false;
             let gpHeavy = false;
+            let gpSpinLeft = false;
+            let gpSpinRight = false;
+            let gpAim: number | null = null;
             const gps = navigator.getGamepads ? navigator.getGamepads() : [];
             const gp = gps?.[0];
             if (gp) {
@@ -507,7 +521,20 @@ export default function App() {
               gpRight = gp.axes[0] > 0.35 || Boolean(gp.buttons[15]?.pressed);
               gpJump = Boolean(gp.buttons[0]?.pressed || gp.buttons[12]?.pressed);
               gpHeavy = Boolean(gp.buttons[2]?.pressed || gp.buttons[7]?.pressed);
+              gpSpinLeft = Boolean(gp.buttons[4]?.pressed);
+              gpSpinRight = Boolean(gp.buttons[5]?.pressed);
+              if (gp.axes.length >= 4 && Math.hypot(gp.axes[2], gp.axes[3]) > 0.35) {
+                gpAim = Math.atan2(gp.axes[3], gp.axes[2]);
+              }
             }
+
+            const spinLeft = ks.has('KeyQ') || ks.has('KeyJ') || Boolean(ti.spinLeft) || gpSpinLeft;
+            const spinRight = ks.has('KeyF') || ks.has('KeyL') || Boolean(ti.spinRight) || gpSpinRight;
+            const ptr = pointerAimRef.current;
+            const pointerAim =
+              !spinLeft && !spinRight && gpAim === null && now < ptr.activeUntil
+                ? Math.atan2(ptr.arenaY - p.y, ptr.arenaX - p.x)
+                : gpAim;
 
             inputs[p.id] = {
               left: ks.has('ArrowLeft') || ks.has('KeyA') || ti.left || gpLeft,
@@ -526,6 +553,9 @@ export default function App() {
                 ti.heavy ||
                 gpHeavy,
               emote: ks.has('KeyE') || ti.emote,
+              spinLeft,
+              spinRight,
+              aimAngle: pointerAim,
             };
           } else {
             inputs[p.id] = computeAiInput(st, p);
@@ -568,6 +598,7 @@ export default function App() {
                 alive: pl.alive,
                 stocks: pl.stocks,
                 angle: Number(pl.angle.toFixed(2)),
+                knobAngle: Number(pl.knobAngle.toFixed(2)),
                 objectiveScore: Number(pl.objectiveScore.toFixed(1)),
                 hasFlag: pl.hasFlag,
                 calloutText: pl.calloutText,
@@ -601,6 +632,8 @@ export default function App() {
                 prevSec !== nextSec ||
                 prev.humanAlive !== nextSnap.humanAlive ||
                 prev.humanBounceChain !== nextSnap.humanBounceChain ||
+                Math.round(prev.humanMass * 20) !== Math.round(nextSnap.humanMass * 20) ||
+                prev.humanAirJumps !== nextSnap.humanAirJumps ||
                 speedBandChanged ||
                 prev.players.length !== nextSnap.players.length ||
                 prev.players.some(
@@ -708,6 +741,22 @@ export default function App() {
       keysRef.current.delete(e.code);
     };
 
+    const onMouseMove = (e: MouseEvent) => {
+      if (shellRef.current !== 'playing' || modalOpenRef.current) return;
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      const cam = camRef.current;
+      const baseScale = Math.min(w / ARENA_WIDTH, h / ARENA_HEIGHT);
+      const scale = baseScale * cam.zoom;
+      const ax = (e.clientX - w * 0.5) / scale + cam.x;
+      const ay = (e.clientY - h * 0.5) / scale + cam.y;
+      pointerAimRef.current = {
+        arenaX: ax,
+        arenaY: ay,
+        activeUntil: performance.now() + 650,
+      };
+    };
+
     const clearKeys = () => {
       keysRef.current.clear();
       touchInputRef.current = {
@@ -717,16 +766,20 @@ export default function App() {
         down: false,
         heavy: false,
         emote: false,
+        spinLeft: false,
+        spinRight: false,
       };
     };
 
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('mousemove', onMouseMove);
     window.addEventListener('blur', clearKeys);
     document.addEventListener('visibilitychange', clearKeys);
     return () => {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('mousemove', onMouseMove);
       window.removeEventListener('blur', clearKeys);
       document.removeEventListener('visibilitychange', clearKeys);
     };

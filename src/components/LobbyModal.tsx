@@ -216,8 +216,10 @@ export const LobbyModal: React.FC<LobbyModalProps> = ({
                     [
                       ['map_default', 'Map Default'],
                       ['standard', 'Standard'],
-                      ['low_gravity', 'Low Gravity'],
-                      ['high_momentum', 'High Momentum'],
+                      ['moon', 'Moon'],
+                      ['bouncy', 'Bouncy'],
+                      ['heavy', 'Heavy'],
+                      ['high_momentum', 'Hyper'],
                     ] as const
                   ).map(([pId, pLabel]) => (
                     <button

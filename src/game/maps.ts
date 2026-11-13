@@ -16,7 +16,7 @@ export const BUILTIN_MAPS: ArenaMap[] = [
     advancedPhysics: false,
     physicsOverrides: {
       sv_gravity: 480,
-      sv_bounce: 0.42,
+      sv_bounce: 0.68,
       sv_fastfall_multiplier: 1.9,
     },
     bounds: { width: ARENA_WIDTH, height: ARENA_HEIGHT },

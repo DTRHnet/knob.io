@@ -46,7 +46,12 @@ export function computeAiInput(state: MatchState, bot: PlayerState): PlayerInput
   if (fallingDanger || (bot.y > 540 && !bot.grounded)) {
     if (bot.x < ARENA_WIDTH * 0.5) input.right = true;
     else input.left = true;
-    if (bot.grounded || bot.onStickyWall || bot.coyoteTimer > 0) {
+    const canJump =
+      bot.grounded ||
+      bot.onStickyWall ||
+      bot.coyoteTimer > 0 ||
+      (bot.airJumpsRemaining > 0 && bot.vy > 35);
+    if (canJump && !bot.prevJumpHeld) {
       input.up = true;
     }
     return input;
@@ -57,7 +62,9 @@ export function computeAiInput(state: MatchState, bot: PlayerState): PlayerInput
     if (distFromCenter > state.survivalRadius * 0.72) {
       if (bot.x < ARENA_WIDTH / 2) input.right = true;
       else input.left = true;
-      if (bot.y > ARENA_HEIGHT / 2 && (bot.grounded || bot.coyoteTimer > 0)) input.up = true;
+      const canJump =
+        bot.grounded || bot.coyoteTimer > 0 || (bot.airJumpsRemaining > 0 && bot.vy > 35);
+      if (bot.y > ARENA_HEIGHT / 2 && canJump && !bot.prevJumpHeld) input.up = true;
       return input;
     }
   }
@@ -73,14 +80,21 @@ export function computeAiInput(state: MatchState, bot: PlayerState): PlayerInput
   const dx = target.x - bot.x;
   const dy = target.y - bot.y;
   const dist = Math.hypot(dx, dy);
+  const angleToTarget = Math.atan2(dy, dx);
 
-  // Policy 1: BRAWLER — Aggressive charger + Heavy slam right before collision
+  // Policy 1: BRAWLER — Aggressive charger + Spin-Hit + Heavy slam right before collision
   if (bot.aiPolicy === 'brawler') {
     if (dx > 18 && !nearRightEdge) input.right = true;
     else if (dx < -18 && !nearLeftEdge) input.left = true;
 
     if (dy < -42 && (bot.grounded || bot.coyoteTimer > 0)) {
       input.up = true;
+    }
+    if (dist < 90) {
+      input.spinRight = dx >= 0;
+      input.spinLeft = dx < 0;
+    } else {
+      input.aimAngle = angleToTarget;
     }
     if (dist < 105 && Math.abs(bot.vx) > 95) {
       input.heavy = true;
@@ -92,17 +106,20 @@ export function computeAiInput(state: MatchState, bot: PlayerState): PlayerInput
     return input;
   }
 
-  // Policy 2: ACROBAT — Evasive high-ground jumper, edge-guarder, bouncy-pad user
+  // Policy 2: ACROBAT — Evasive high-ground jumper, knob parry, spin-whip counter
   if (bot.aiPolicy === 'acrobat') {
-    // Prefer higher elevation and avoid direct heavy clashes
     const threatClose = dist < 110 && target.isHeavy;
+    if (dist < 85) {
+      input.spinLeft = dy >= 0;
+      input.spinRight = dy < 0;
+    } else if (dist < 240) {
+      input.aimAngle = angleToTarget;
+    }
     if (threatClose) {
-      // Dodge away and jump over
       if (dx > 0 && !nearLeftEdge) input.left = true;
       else if (!nearRightEdge) input.right = true;
       if (bot.grounded || bot.coyoteTimer > 0) input.up = true;
     } else {
-      // Seek upper platform or flank target
       if (bot.y > 320 && (bot.grounded || bot.coyoteTimer > 0)) {
         input.up = true;
       }
@@ -110,7 +127,6 @@ export function computeAiInput(state: MatchState, bot: PlayerState): PlayerInput
         if (dx > 0 && !nearRightEdge) input.right = true;
         else if (dx < 0 && !nearLeftEdge) input.left = true;
       } else if (dy > 20 && !bot.grounded) {
-        // Aerial dive strike
         input.down = true;
         input.heavy = dist < 68;
       }
@@ -118,7 +134,7 @@ export function computeAiInput(state: MatchState, bot: PlayerState): PlayerInput
     return input;
   }
 
-  // Policy 3: TACTICIAN — Objective controller (KOTH hill, CTF flag/goal, zone user)
+  // Policy 3: TACTICIAN — Objective controller + defensive knob guard toward nearest challenger
   let goalX = target.x;
   let goalY = target.y;
 
@@ -148,6 +164,10 @@ export function computeAiInput(state: MatchState, bot: PlayerState): PlayerInput
 
   if (gdy < -36 && (bot.grounded || bot.coyoteTimer > 0)) {
     input.up = true;
+  }
+
+  if (dist < 200) {
+    input.aimAngle = angleToTarget;
   }
 
   // Brace with heavy inside KOTH hill or when defending against close opponent

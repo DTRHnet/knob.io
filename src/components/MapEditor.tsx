@@ -369,12 +369,12 @@ export const MapEditor: React.FC<MapEditorProps> = ({
 
         {/* Physics CVars & Momentum Presets */}
         <div className="rounded-lg bg-[#0E131E] border border-white/10 p-3.5 space-y-2.5">
-          <div className="flex items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <h4 className="text-xs font-bold uppercase tracking-wider text-slate-300">
               Physics CVars
             </h4>
-            <div className="flex items-center gap-1">
-              {(['standard', 'low_gravity', 'high_momentum'] as const).map((pid) => (
+            <div className="flex flex-wrap items-center gap-1">
+              {(['standard', 'moon', 'bouncy', 'heavy', 'high_momentum'] as const).map((pid) => (
                 <button
                   key={pid}
                   type="button"
@@ -389,7 +389,15 @@ export const MapEditor: React.FC<MapEditorProps> = ({
                   }
                   className="px-2 py-0.5 rounded bg-[#1A2233] hover:bg-[#253047] text-[10px] font-semibold text-cyan-200 cursor-pointer whitespace-nowrap"
                 >
-                  {pid === 'standard' ? 'Std' : pid === 'low_gravity' ? 'Low-G' : 'Hyper'}
+                  {pid === 'standard'
+                    ? 'Std'
+                    : pid === 'moon'
+                    ? 'Moon'
+                    : pid === 'bouncy'
+                    ? 'Bouncy'
+                    : pid === 'heavy'
+                    ? 'Heavy'
+                    : 'Hyper'}
                 </button>
               ))}
             </div>
@@ -398,11 +406,20 @@ export const MapEditor: React.FC<MapEditorProps> = ({
             {(
               [
                 ['sv_gravity', 'Gravity', 100, 2000, 20],
+                ['sv_air_gravity_mult', 'Air Grav x', 0.4, 2.5, 0.05],
                 ['sv_jump_impulse', 'Jump Imp', 120, 900, 10],
+                ['sv_air_jumps', 'Air Jumps', 0, 3, 1],
                 ['sv_bounce', 'Bounce (e)', 0, 1.5, 0.05],
+                ['sv_bounce_weight_gain', 'Bounce Wt+', 0, 0.5, 0.02],
+                ['sv_bounce_accel_gain', 'Bounce Acc+', 0, 0.5, 0.02],
                 ['sv_fastfall_multiplier', 'Fast-Fall x', 1, 4, 0.1],
                 ['sv_air_control', 'Air Control', 0.1, 1.5, 0.05],
+                ['sv_linear_damping', 'Damping', 0, 1, 0.02],
+                ['sv_heavy_mass_mult', 'Heavy Mass', 1, 4, 0.1],
+                ['sv_heavy_accel_mult', 'Heavy Accel', 0.1, 1.2, 0.05],
                 ['sv_max_speed', 'Max Speed', 150, 1400, 20],
+                ['sv_knob_spin_speed', 'Knob Spin', 2, 24, 0.5],
+                ['sv_knob_hit_mult', 'Knob Power', 1, 2.5, 0.05],
                 ['sv_jump_buffer', 'Jump Buf ms', 0, 300, 10],
                 ['sv_coyote_time', 'Coyote ms', 0, 300, 10],
               ] as Array<[keyof PhysicsCVars, string, number, number, number]>

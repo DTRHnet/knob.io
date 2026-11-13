@@ -528,14 +528,14 @@ function drawPlayerCircle(ctx: CanvasRenderingContext2D, p: PlayerState, time: n
     ctx.globalAlpha = 0.6;
   }
 
-  // Active Bounce Boost / Chain kinetic aura ring
+  // Active Bounce Boost / Chain kinetic weight aura ring
   if (p.activeBoostFlash > 0 || p.bounceChain >= 1) {
     ctx.save();
     ctx.strokeStyle = p.activeBoostFlash > 0 ? '#34d399' : '#c084fc';
-    ctx.globalAlpha = p.activeBoostFlash > 0 ? 0.85 : 0.45;
-    ctx.lineWidth = p.activeBoostFlash > 0 ? 3.5 : 2;
+    ctx.globalAlpha = p.activeBoostFlash > 0 ? 0.85 : Math.min(0.85, 0.35 + p.bounceChain * 0.08);
+    ctx.lineWidth = (p.activeBoostFlash > 0 ? 3.5 : 2) + Math.min(3.5, p.bounceChain * 0.45);
     ctx.beginPath();
-    ctx.arc(0, 0, p.radius + 7 + (p.activeBoostFlash > 0 ? 3 : 0), 0, Math.PI * 2);
+    ctx.arc(0, 0, p.radius + 6 + Math.min(5, p.bounceChain * 0.65) + (p.activeBoostFlash > 0 ? 2.5 : 0), 0, Math.PI * 2);
     ctx.stroke();
     ctx.restore();
   }
@@ -551,13 +551,44 @@ function drawPlayerCircle(ctx: CanvasRenderingContext2D, p: PlayerState, time: n
     ctx.restore();
   }
 
+  // External radius-length directional knob (rotates independently along p.knobAngle)
+  ctx.save();
+  ctx.rotate(p.knobAngle);
+  if (Math.abs(p.knobAngVel) > 3.0) {
+    const dir = p.knobAngVel >= 0 ? 1 : -1;
+    ctx.save();
+    ctx.strokeStyle = p.knobFlashTimer > 0 ? '#ffffff' : p.loadout.color;
+    ctx.globalAlpha = Math.min(0.55, Math.abs(p.knobAngVel) * 0.045);
+    ctx.lineWidth = 5;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.arc(0, 0, p.radius * 1.72, dir > 0 ? -0.65 : 0, dir > 0 ? 0 : 0.65);
+    ctx.stroke();
+    ctx.restore();
+  }
+  const stemStart = p.radius * 0.72;
+  const tipCenter = p.radius * 1.72;
+  const tipRadius = p.radius * 0.30;
+  ctx.fillStyle = p.knobFlashTimer > 0 ? '#fef08a' : p.loadout.color;
+  ctx.strokeStyle = p.isHeavy ? '#0f172a' : '#f8fafc';
+  ctx.lineWidth = 2.4;
+  ctx.beginPath();
+  ctx.moveTo(stemStart, -p.radius * 0.22);
+  ctx.lineTo(tipCenter, -tipRadius * 0.85);
+  ctx.arc(tipCenter, 0, tipRadius, -Math.PI * 0.5, Math.PI * 0.5);
+  ctx.lineTo(stemStart, p.radius * 0.22);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+
   ctx.save();
   ctx.scale(p.squashX, p.squashY);
   ctx.rotate(p.angle);
 
   ctx.fillStyle = p.hitFlashTimer > 0 ? '#ffffff' : p.loadout.color;
   ctx.strokeStyle = p.isHeavy ? '#0f172a' : '#f8fafc';
-  ctx.lineWidth = p.isHeavy ? 4 : 2.5;
+  ctx.lineWidth = p.isHeavy ? 4 : 2.5 + Math.min(2, Math.max(0, p.mass - 1) * 1.4);
   ctx.beginPath();
   ctx.arc(0, 0, p.radius, 0, Math.PI * 2);
   ctx.fill();
@@ -565,7 +596,7 @@ function drawPlayerCircle(ctx: CanvasRenderingContext2D, p: PlayerState, time: n
 
   drawSkinOverlay(ctx, p.loadout.skin, p.radius);
 
-  // Subtle directional eye dots for instant readable orientation
+  // Subtle directional eye dots oriented toward movement/velocity
   const lookX = Math.max(-1, Math.min(1, p.vx / 260)) * 4;
   ctx.fillStyle = '#0f172a';
   ctx.beginPath();
@@ -573,6 +604,19 @@ function drawPlayerCircle(ctx: CanvasRenderingContext2D, p: PlayerState, time: n
   ctx.arc(lookX + 5, -3, 2.6, 0, Math.PI * 2);
   ctx.fill();
   ctx.restore();
+
+  // Airborne Double-Jump readiness pip beneath circle
+  if (!p.grounded && p.airJumpsRemaining > 0) {
+    ctx.save();
+    ctx.fillStyle = '#38bdf8';
+    ctx.strokeStyle = '#0f172a';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(0, p.radius + 8, 3.2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  }
 
   // Player name tag with dark outline for contrast over bright platforms
   ctx.font = '600 11px "Plus Jakarta Sans", sans-serif';
@@ -620,6 +664,7 @@ export function applyReplayFrame(state: MatchState, frame: ReplayFrame): void {
     p.alive = fp.alive;
     p.stocks = fp.stocks;
     p.angle = fp.angle;
+    if (fp.knobAngle !== undefined) p.knobAngle = fp.knobAngle;
     p.objectiveScore = fp.objectiveScore;
     p.hasFlag = fp.hasFlag;
     p.calloutText = fp.calloutText;

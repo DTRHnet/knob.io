@@ -9,65 +9,116 @@ export type SurfaceMaterial =
   | 'breakable'
   | 'soft';
 
-export type PhysicsPresetId = 'map_default' | 'standard' | 'low_gravity' | 'high_momentum';
+export type PhysicsPresetId =
+  | 'map_default'
+  | 'standard'
+  | 'moon'
+  | 'bouncy'
+  | 'heavy'
+  | 'high_momentum';
 
 export interface PhysicsCVars {
   sv_gravity: number;
+  sv_air_gravity_mult: number;
   sv_jump_impulse: number;
+  sv_air_jumps: number;
   sv_early_release_gravity: number;
   sv_fall_gravity: number;
   sv_fastfall_multiplier: number;
   sv_max_fall_speed: number;
   sv_bounce: number;
+  sv_bounce_weight_gain: number;
+  sv_bounce_accel_gain: number;
   sv_air_control: number;
   sv_ground_friction: number;
   sv_air_friction: number;
+  sv_linear_damping: number;
   sv_horizontal_accel: number;
   sv_max_speed: number;
+  sv_heavy_mass_mult: number;
+  sv_heavy_accel_mult: number;
   sv_jump_buffer: number; // ms
   sv_coyote_time: number; // ms
+  sv_knob_length: number;
+  sv_knob_spin_speed: number;
+  sv_knob_hit_mult: number;
 }
 
 export const DEFAULT_PHYSICS_CVARS: PhysicsCVars = {
   sv_gravity: 480,
+  sv_air_gravity_mult: 1.0,
   sv_jump_impulse: 340,
+  sv_air_jumps: 1,
   sv_early_release_gravity: 1.45,
   sv_fall_gravity: 1.0,
   sv_fastfall_multiplier: 1.9,
   sv_max_fall_speed: 680,
-  sv_bounce: 0.42,
-  sv_air_control: 0.6,
+  sv_bounce: 0.68,
+  sv_bounce_weight_gain: 0.16,
+  sv_bounce_accel_gain: 0.14,
+  sv_air_control: 0.56,
   sv_ground_friction: 4.5,
-  sv_air_friction: 0.14,
+  sv_air_friction: 0.12,
+  sv_linear_damping: 0.06,
   sv_horizontal_accel: 560,
   sv_max_speed: 410,
+  sv_heavy_mass_mult: 1.5,
+  sv_heavy_accel_mult: 0.5,
   sv_jump_buffer: 120,
   sv_coyote_time: 100,
+  sv_knob_length: 1.0,
+  sv_knob_spin_speed: 10.5,
+  sv_knob_hit_mult: 1.45,
 };
 
 export const PHYSICS_PRESETS: Record<Exclude<PhysicsPresetId, 'map_default'>, Partial<PhysicsCVars>> = {
   standard: {
     sv_gravity: 480,
+    sv_air_gravity_mult: 1.0,
     sv_jump_impulse: 340,
-    sv_bounce: 0.42,
+    sv_bounce: 0.68,
     sv_fastfall_multiplier: 1.9,
-    sv_air_control: 0.6,
+    sv_air_control: 0.56,
     sv_horizontal_accel: 560,
     sv_max_speed: 410,
     sv_max_fall_speed: 680,
   },
-  low_gravity: {
-    sv_gravity: 240,
-    sv_jump_impulse: 265,
-    sv_bounce: 0.62,
+  moon: {
+    sv_gravity: 190,
+    sv_air_gravity_mult: 1.0,
+    sv_jump_impulse: 255,
+    sv_bounce: 0.68,
     sv_fastfall_multiplier: 2.2,
     sv_air_control: 0.72,
     sv_horizontal_accel: 460,
     sv_max_speed: 380,
-    sv_max_fall_speed: 520,
+    sv_max_fall_speed: 500,
+  },
+  bouncy: {
+    sv_gravity: 480,
+    sv_air_gravity_mult: 1.0,
+    sv_jump_impulse: 330,
+    sv_bounce: 0.94,
+    sv_fastfall_multiplier: 2.0,
+    sv_air_control: 0.65,
+    sv_horizontal_accel: 540,
+    sv_max_speed: 460,
+    sv_max_fall_speed: 720,
+  },
+  heavy: {
+    sv_gravity: 760,
+    sv_air_gravity_mult: 1.08,
+    sv_jump_impulse: 430,
+    sv_bounce: 0.45,
+    sv_fastfall_multiplier: 1.85,
+    sv_air_control: 0.48,
+    sv_horizontal_accel: 680,
+    sv_max_speed: 450,
+    sv_max_fall_speed: 820,
   },
   high_momentum: {
     sv_gravity: 720,
+    sv_air_gravity_mult: 1.0,
     sv_jump_impulse: 440,
     sv_bounce: 0.76,
     sv_fastfall_multiplier: 2.25,
@@ -245,6 +296,9 @@ export interface PlayerInput {
   down: boolean;
   heavy: boolean;
   emote: boolean;
+  spinLeft?: boolean;
+  spinRight?: boolean;
+  aimAngle?: number | null;
 }
 
 export interface TrailPoint {
@@ -268,12 +322,18 @@ export interface PlayerState {
   mass: number;
   angle: number;
   angVel: number;
+  knobAngle: number;
+  knobAngVel: number;
+  knobManualTimer: number;
+  knobFlashTimer: number;
   isHeavy: boolean;
   grounded: boolean;
   onStickyWall: boolean;
   coyoteTimer: number;
   jumpBufferTimer: number;
   prevJumpHeld: boolean;
+  airJumpsRemaining: number;
+  maxAirJumps: number;
   lastSurfaceMaterial: SurfaceMaterial;
   stocks: number;
   alive: boolean;
@@ -295,6 +355,7 @@ export interface PlayerState {
   emoteCooldown: number;
   hasFlag: boolean;
   bounceChain: number;
+  bounceGraceTimer: number;
   lastImpactSpeed: number;
   activeBoostFlash: number;
 }
@@ -360,6 +421,7 @@ export interface ReplayFrame {
     alive: boolean;
     stocks: number;
     angle: number;
+    knobAngle?: number;
     objectiveScore: number;
     hasFlag: boolean;
     calloutText: string | null;

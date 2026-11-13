@@ -109,12 +109,13 @@ test('input buffering executes jump on first landing frame', () => {
     { id: 'p1', name: 'P1', isHuman: true, aiPolicy: 'brawler', team: 0, loadout: DEFAULT_LOADOUT },
     { id: 'p2', name: 'P2', isHuman: false, aiPolicy: 'acrobat', team: 0, loadout: DEFAULT_LOADOUT },
   ]);
-  // Position p1 just above floor falling downward
+  // Position p1 just above floor falling downward with air jump already spent (testing landing input buffer)
   state.players[0].x = 540;
   state.players[0].y = 452;
   state.players[0].vy = 280;
   state.players[0].grounded = false;
   state.players[0].coyoteTimer = 0;
+  state.players[0].airJumpsRemaining = 0;
 
   // Press jump slightly early (while airborne) -> buffers jump, then lands next frame
   stepMatch(state, 0.016, { p1: { ...EMPTY_INPUT, up: true }, p2: EMPTY_INPUT });
@@ -380,8 +381,8 @@ test('impact-based bounce obeys restitution and super_bounce amplifies energy', 
   for (let i = 0; i < 4; i++) {
     stepMatch(state, FIXED_PHYSICS_DT, { p1: EMPTY_INPUT, p2: EMPTY_INPUT });
   }
-  // Standard should rebound upward (~0.42 * 450 = ~189)
-  assert.ok(state.players[0].vy < -140 && state.players[0].vy > -260, `Got std vy=${state.players[0].vy}`);
+  // Standard should rebound upward (~0.68 * 450 = ~306)
+  assert.ok(state.players[0].vy < -230 && state.players[0].vy > -360, `Got std vy=${state.players[0].vy}`);
   // Super bounce (e > 1) should amplify upward velocity above incoming speed
   assert.ok(state.players[1].vy < -480, `Expected super_bounce vy < -480, got ${state.players[1].vy}`);
 });
@@ -401,6 +402,7 @@ test('active bounce boosting adds jump impulse onto impact rebound and increment
   active.players[0].x = 640;
   active.players[0].y = 460;
   active.players[0].vy = 420;
+  active.players[0].airJumpsRemaining = 0;
 
   // Press jump just before landing on active bounce instance
   let activeBoostEvents = 0;
@@ -451,3 +453,336 @@ test('boost surface impulse, moving platform velocity transfer, map physicsOverr
   assert.ok(Math.abs(state.platforms[1].vx) > 50, 'Moving platform should track non-zero vx');
   assert.ok(state.players[1].vx > 50, `Expected rider to inherit moving platform vx, got ${state.players[1].vx}`);
 });
+
+test('double jump works once after first jump, blocks a third jump in air, and refreshes on landing', () => {
+  const map = makeTestMap();
+  const state = createMatchState(map, BASE_CONFIG, [
+    { id: 'p1', name: 'Jumper', isHuman: true, aiPolicy: 'brawler', team: 0, loadout: DEFAULT_LOADOUT },
+  ]);
+  const p = state.players[0];
+  p.x = 640;
+  p.y = 463;
+  p.grounded = true;
+  p.coyoteTimer = 0.1;
+
+  // 1st jump from ground
+  const ev1 = stepMatch(state, FIXED_PHYSICS_DT, { p1: { ...EMPTY_INPUT, up: true } });
+  assert.equal(ev1.jumps, 1);
+  assert.equal(p.airJumpsRemaining, 1);
+
+  // Release up for a few frames while airborne and descending slightly
+  for (let i = 0; i < 20; i++) {
+    stepMatch(state, FIXED_PHYSICS_DT, { p1: EMPTY_INPUT });
+  }
+  const vyBeforeDouble = p.vy;
+
+  // 2nd jump (double jump) in air
+  const ev2 = stepMatch(state, FIXED_PHYSICS_DT, { p1: { ...EMPTY_INPUT, up: true } });
+  assert.equal(ev2.jumps, 1);
+  assert.equal(p.airJumpsRemaining, 0);
+  assert.ok(p.vy < vyBeforeDouble - 120, `Double jump should boost upward: before=${vyBeforeDouble}, after=${p.vy}`);
+
+  // Release up and attempt a 3rd jump in midair -> must NOT jump
+  stepMatch(state, FIXED_PHYSICS_DT, { p1: EMPTY_INPUT });
+  const ev3 = stepMatch(state, FIXED_PHYSICS_DT, { p1: { ...EMPTY_INPUT, up: true } });
+  assert.equal(ev3.jumps, 0);
+  assert.equal(p.airJumpsRemaining, 0);
+
+  // Drop and land back on platform (allowing passive e=0.68 bounces to settle) -> refreshes double jump
+  for (let i = 0; i < 420; i++) {
+    stepMatch(state, FIXED_PHYSICS_DT, { p1: EMPTY_INPUT });
+  }
+  assert.equal(p.grounded, true);
+  assert.equal(p.airJumpsRemaining, 1);
+});
+
+test('bouncing builds weight (mass) and acceleration across consecutive bounces while passive drop settles cleanly', () => {
+  const map = makeTestMap({
+    platforms: [
+      { id: 'bouncy-floor', x: 640, y: 500, w: 900, h: 24, angle: 0, material: 'bouncy', active: true },
+    ],
+  });
+  const state = createMatchState(map, BASE_CONFIG, [
+    { id: 'p1', name: 'Bouncer', isHuman: true, aiPolicy: 'brawler', team: 0, loadout: DEFAULT_LOADOUT },
+    { id: 'p2', name: 'Baseline', isHuman: false, aiPolicy: 'brawler', team: 0, loadout: DEFAULT_LOADOUT },
+  ]);
+  const bouncer = state.players[0];
+  const baseline = state.players[1];
+  bouncer.x = 500;
+  bouncer.y = 440;
+  bouncer.vy = 240;
+  baseline.x = 900;
+  baseline.y = 200;
+  baseline.vy = 0;
+
+  // Perform 2 bouncy hits while holding right + fast-fall on descent
+  let bouncesSeen = 0;
+  let lastVy = bouncer.vy;
+  for (let i = 0; i < 180; i++) {
+    stepMatch(state, FIXED_PHYSICS_DT, {
+      p1: { ...EMPTY_INPUT, right: true, down: bouncer.vy > 0 },
+      p2: EMPTY_INPUT,
+    });
+    if (lastVy > 0 && bouncer.vy < -100) bouncesSeen++;
+    lastVy = bouncer.vy;
+    if (bouncesSeen >= 2) break;
+  }
+
+  assert.ok(bouncesSeen >= 2, `Expected >=2 bounces, got ${bouncesSeen}`);
+  assert.ok(bouncer.bounceChain >= 2, `Expected bounceChain >= 2, got ${bouncer.bounceChain}`);
+  assert.ok(bouncer.mass > 1.25, `Expected gained weight mass > 1.25, got ${bouncer.mass}`);
+
+  // Compare acceleration with bounceChain vs 0 bounceChain
+  const testMap = makeTestMap();
+  const accelState = createMatchState(testMap, BASE_CONFIG, [
+    { id: 'chained', name: 'Chained', isHuman: true, aiPolicy: 'brawler', team: 0, loadout: DEFAULT_LOADOUT },
+    { id: 'fresh', name: 'Fresh', isHuman: false, aiPolicy: 'brawler', team: 0, loadout: DEFAULT_LOADOUT },
+  ]);
+  accelState.players[0].x = 400;
+  accelState.players[0].y = 350;
+  accelState.players[0].bounceChain = 3;
+  accelState.players[1].x = 800;
+  accelState.players[1].y = 350;
+  accelState.players[1].bounceChain = 0;
+
+  for (let i = 0; i < 20; i++) {
+    stepMatch(accelState, FIXED_PHYSICS_DT, {
+      chained: { ...EMPTY_INPUT, right: true },
+      fresh: { ...EMPTY_INPUT, right: true },
+    });
+  }
+  assert.ok(
+    accelState.players[0].vx > accelState.players[1].vx * 1.25,
+    `Expected chained vx (${accelState.players[0].vx}) > 1.25x fresh vx (${accelState.players[1].vx})`
+  );
+
+  // Passive drop on standard floor with e=0.68 must decay and settle cleanly
+  const settleState = createMatchState(testMap, BASE_CONFIG, [
+    { id: 'p1', name: 'Dropper', isHuman: true, aiPolicy: 'brawler', team: 0, loadout: DEFAULT_LOADOUT },
+  ]);
+  settleState.players[0].x = 640;
+  settleState.players[0].y = 340;
+  for (let i = 0; i < 360; i++) {
+    stepMatch(settleState, FIXED_PHYSICS_DT, { p1: EMPTY_INPUT });
+  }
+  assert.equal(settleState.players[0].grounded, true);
+  assert.equal(settleState.players[0].bounceChain, 0);
+  assert.equal(settleState.players[0].mass, 1.0);
+});
+
+test('heavy mode adds +50% mass and halves acceleration, while new CVars and presets apply cleanly', () => {
+  const map = makeTestMap();
+  const state = createMatchState(map, BASE_CONFIG, [
+    { id: 'heavy', name: 'Heavy', isHuman: true, aiPolicy: 'brawler', team: 0, loadout: DEFAULT_LOADOUT },
+    { id: 'light', name: 'Light', isHuman: false, aiPolicy: 'brawler', team: 0, loadout: DEFAULT_LOADOUT },
+  ]);
+  state.players[0].x = 400;
+  state.players[0].y = 463;
+  state.players[0].grounded = true;
+  state.players[1].x = 800;
+  state.players[1].y = 463;
+  state.players[1].grounded = true;
+
+  for (let i = 0; i < 20; i++) {
+    stepMatch(state, FIXED_PHYSICS_DT, {
+      heavy: { ...EMPTY_INPUT, heavy: true, right: true },
+      light: { ...EMPTY_INPUT, heavy: false, right: true },
+    });
+  }
+
+  assert.equal(state.players[0].mass, 1.5);
+  assert.equal(state.players[1].mass, 1.0);
+  assert.ok(
+    Math.abs(state.players[0].vx - state.players[1].vx * 0.5) < 8,
+    `Expected heavy vx (${state.players[0].vx}) ≈ 0.5 * light vx (${state.players[1].vx})`
+  );
+
+  // Verify presets resolve distinct CVars
+  const moon = createMatchState(map, { ...BASE_CONFIG, physicsPreset: 'moon' }, []);
+  const bouncy = createMatchState(map, { ...BASE_CONFIG, physicsPreset: 'bouncy' }, []);
+  const heavyPreset = createMatchState(map, { ...BASE_CONFIG, physicsPreset: 'heavy' }, []);
+  const hyper = createMatchState(map, { ...BASE_CONFIG, physicsPreset: 'high_momentum' }, []);
+  assert.ok(moon.cvars.sv_gravity < 250);
+  assert.ok(bouncy.cvars.sv_bounce > 0.9);
+  assert.ok(heavyPreset.cvars.sv_gravity > 700 && heavyPreset.cvars.sv_bounce < 0.5);
+  assert.ok(hyper.cvars.sv_max_speed > 600);
+
+  // Verify sv_air_gravity_mult & sv_linear_damping take effect
+  const dampState = createMatchState(
+    makeTestMap({ physicsOverrides: { sv_gravity: 0, sv_air_friction: 0, sv_linear_damping: 0.5 } }),
+    BASE_CONFIG,
+    [{ id: 'p1', name: 'P1', isHuman: true, aiPolicy: 'brawler', team: 0, loadout: DEFAULT_LOADOUT }]
+  );
+  dampState.players[0].x = 640;
+  dampState.players[0].y = 300;
+  dampState.players[0].vx = 300;
+  for (let i = 0; i < 120; i++) stepMatch(dampState, FIXED_PHYSICS_DT, { p1: EMPTY_INPUT });
+  assert.ok(dampState.players[0].vx < 200, `Expected linear damping to slow vx from 300, got ${dampState.players[0].vx}`);
+
+  // 10-second Glacier Spire 4-bot rally pacing check (no <3s instant wipeouts)
+  const rally = createMatchState(BUILTIN_MAPS[0], BASE_CONFIG, [
+    { id: 'b1', name: 'B1', isHuman: false, aiPolicy: 'brawler', team: 0, loadout: DEFAULT_LOADOUT },
+    { id: 'b2', name: 'B2', isHuman: false, aiPolicy: 'acrobat', team: 0, loadout: DEFAULT_LOADOUT },
+    { id: 'b3', name: 'B3', isHuman: false, aiPolicy: 'tactician', team: 0, loadout: DEFAULT_LOADOUT },
+    { id: 'b4', name: 'B4', isHuman: false, aiPolicy: 'brawler', team: 0, loadout: DEFAULT_LOADOUT },
+  ]);
+  const acc = { current: 0 };
+  for (let tick = 0; tick < 60 * 10; tick++) {
+    const botInputs: Record<string, PlayerInput> = {};
+    for (const pl of rally.players) botInputs[pl.id] = computeAiInput(rally, pl);
+    stepMatchFixed(rally, 1 / 60, botInputs, acc);
+    if (tick === 180) {
+      assert.equal(rally.finished, false, 'Match should still be active past 3 seconds');
+    }
+  }
+  assert.ok(rally.players.some((pl) => pl.alive), 'At least one circle should remain active in rally');
+});
+
+test('directional knob aligns with velocity passively and rotates independently via spinLeft/spinRight and aimAngle', () => {
+  const zeroGravMap = makeTestMap({ physicsOverrides: { sv_gravity: 0, sv_air_friction: 0, sv_linear_damping: 0 } });
+  const state = createMatchState(zeroGravMap, BASE_CONFIG, [
+    { id: 'auto', name: 'Auto', isHuman: true, aiPolicy: 'brawler', team: 0, loadout: DEFAULT_LOADOUT },
+    { id: 'manual', name: 'Manual', isHuman: false, aiPolicy: 'brawler', team: 0, loadout: DEFAULT_LOADOUT },
+    { id: 'aimed', name: 'Aimed', isHuman: false, aiPolicy: 'brawler', team: 0, loadout: DEFAULT_LOADOUT },
+  ]);
+
+  // Passive velocity alignment: moving down-right rotates knob toward ~pi/4
+  const autoP = state.players[0];
+  autoP.x = 300;
+  autoP.y = 300;
+  autoP.vx = 180;
+  autoP.vy = 180;
+  autoP.knobAngle = Math.PI;
+
+  // Manual spin while moving right: spinLeft should rotate CCW independently of velocity
+  const manualP = state.players[1];
+  manualP.x = 640;
+  manualP.y = 300;
+  manualP.vx = 140;
+  manualP.vy = 0;
+  manualP.knobAngle = 0;
+
+  // Direct aimAngle pointing straight up (-pi/2) while moving right
+  const aimedP = state.players[2];
+  aimedP.x = 960;
+  aimedP.y = 300;
+  aimedP.vx = 140;
+  aimedP.vy = 0;
+  aimedP.knobAngle = Math.PI;
+
+  for (let i = 0; i < 60; i++) {
+    stepMatch(state, FIXED_PHYSICS_DT, {
+      auto: EMPTY_INPUT,
+      manual: { ...EMPTY_INPUT, spinLeft: true },
+      aimed: { ...EMPTY_INPUT, aimAngle: -Math.PI / 2 },
+    });
+  }
+
+  const autoErr = Math.abs(Math.atan2(Math.sin(autoP.knobAngle - Math.PI / 4), Math.cos(autoP.knobAngle - Math.PI / 4)));
+  assert.ok(autoErr < 0.25, `Expected auto knob to align near pi/4, got ${autoP.knobAngle}`);
+  assert.ok(manualP.knobAngVel < -5, `Expected manual spinLeft angular velocity < -5, got ${manualP.knobAngVel}`);
+  assert.ok(manualP.knobManualTimer > 0.4, 'Expected manual timer to hold against velocity auto-align');
+  const aimedErr = Math.abs(Math.atan2(Math.sin(aimedP.knobAngle + Math.PI / 2), Math.cos(aimedP.knobAngle + Math.PI / 2)));
+  assert.ok(aimedErr < 0.2, `Expected aimed knob near -pi/2, got ${aimedP.knobAngle}`);
+});
+
+test('directional knob combat: one-way knob strike outperforms body-body hit, spin-and-hit launches adjacent foes, and knob-vs-knob parries', () => {
+  const zeroGravMap = makeTestMap({ physicsOverrides: { sv_gravity: 0, sv_air_friction: 0, sv_linear_damping: 0 } });
+
+  // 1. Compare A hitting B's non-knob side with A's knob vs symmetric body-to-body hit
+  const knobHitState = createMatchState(zeroGravMap, BASE_CONFIG, [
+    { id: 'a', name: 'Striker', isHuman: true, aiPolicy: 'brawler', team: 0, loadout: DEFAULT_LOADOUT },
+    { id: 'b', name: 'Target', isHuman: false, aiPolicy: 'brawler', team: 0, loadout: DEFAULT_LOADOUT },
+  ]);
+  knobHitState.players[0].x = 500;
+  knobHitState.players[0].y = 300;
+  knobHitState.players[0].vx = 260;
+  knobHitState.players[0].knobAngle = 0; // A's knob points right toward B
+  knobHitState.players[1].x = 562; // Within A's external knob reach + B's body radius
+  knobHitState.players[1].y = 300;
+  knobHitState.players[1].vx = 0;
+  knobHitState.players[1].knobAngle = 0; // B's knob faces away (right), exposing left non-knob side
+
+  const bodyHitState = createMatchState(zeroGravMap, BASE_CONFIG, [
+    { id: 'a', name: 'Striker', isHuman: true, aiPolicy: 'brawler', team: 0, loadout: DEFAULT_LOADOUT },
+    { id: 'b', name: 'Target', isHuman: false, aiPolicy: 'brawler', team: 0, loadout: DEFAULT_LOADOUT },
+  ]);
+  bodyHitState.players[0].x = 500;
+  bodyHitState.players[0].y = 300;
+  bodyHitState.players[0].vx = 260;
+  bodyHitState.players[0].knobAngle = Math.PI; // A's knob faces away (left)
+  bodyHitState.players[1].x = 538; // Overlapping body-to-body
+  bodyHitState.players[1].y = 300;
+  bodyHitState.players[1].vx = 0;
+  bodyHitState.players[1].knobAngle = 0; // B's knob faces away (right)
+
+  stepMatch(knobHitState, FIXED_PHYSICS_DT, {
+    a: { ...EMPTY_INPUT, aimAngle: 0 },
+    b: { ...EMPTY_INPUT, aimAngle: 0 },
+  });
+  stepMatch(bodyHitState, FIXED_PHYSICS_DT, {
+    a: { ...EMPTY_INPUT, aimAngle: Math.PI },
+    b: { ...EMPTY_INPUT, aimAngle: 0 },
+  });
+
+  assert.ok(
+    knobHitState.players[1].vx > bodyHitState.players[1].vx * 1.15,
+    `Expected one-way knob strike target vx (${knobHitState.players[1].vx}) > 1.15x body hit (${bodyHitState.players[1].vx})`
+  );
+  assert.ok(
+    knobHitState.players[0].vx > bodyHitState.players[0].vx,
+    `Expected one-way knob striker to retain more forward momentum (${knobHitState.players[0].vx} vs ${bodyHitState.players[0].vx})`
+  );
+  assert.ok(knobHitState.players[0].knobFlashTimer > 0, 'Expected striker knob flash timer on hit');
+
+  // 2. Spin-and-hit: stationary A spins CW (spinRight) while B sits below-right within knob sweep
+  const spinState = createMatchState(zeroGravMap, BASE_CONFIG, [
+    { id: 'a', name: 'Spinner', isHuman: true, aiPolicy: 'brawler', team: 0, loadout: DEFAULT_LOADOUT },
+    { id: 'b', name: 'Victim', isHuman: false, aiPolicy: 'brawler', team: 0, loadout: DEFAULT_LOADOUT },
+  ]);
+  spinState.players[0].x = 500;
+  spinState.players[0].y = 300;
+  spinState.players[0].vx = 0;
+  spinState.players[0].vy = 0;
+  spinState.players[0].knobAngle = -0.25; // Just above horizontal; CW spin sweeps down through 0 into B
+  spinState.players[1].x = 556;
+  spinState.players[1].y = 310;
+  spinState.players[1].vx = 0;
+  spinState.players[1].vy = 0;
+  spinState.players[1].knobAngle = 0;
+
+  for (let i = 0; i < 6; i++) {
+    stepMatch(spinState, FIXED_PHYSICS_DT, {
+      a: { ...EMPTY_INPUT, spinRight: true },
+      b: { ...EMPTY_INPUT, aimAngle: 0 },
+    });
+  }
+  const victimSpeed = Math.hypot(spinState.players[1].vx, spinState.players[1].vy);
+  assert.ok(victimSpeed > 120, `Expected spin-and-hit to launch stationary victim, got speed ${victimSpeed}`);
+
+  // 3. Knob-vs-knob parry clash when two knobs point directly at each other
+  const parryState = createMatchState(zeroGravMap, BASE_CONFIG, [
+    { id: 'a', name: 'KnightA', isHuman: true, aiPolicy: 'brawler', team: 0, loadout: DEFAULT_LOADOUT },
+    { id: 'b', name: 'KnightB', isHuman: false, aiPolicy: 'brawler', team: 0, loadout: DEFAULT_LOADOUT },
+  ]);
+  parryState.players[0].x = 500;
+  parryState.players[0].y = 300;
+  parryState.players[0].vx = 220;
+  parryState.players[0].knobAngle = 0;
+  parryState.players[1].x = 582; // Knob tips overlap while bodies stay separated
+  parryState.players[1].y = 300;
+  parryState.players[1].vx = -220;
+  parryState.players[1].knobAngle = Math.PI;
+
+  stepMatch(parryState, FIXED_PHYSICS_DT, {
+    a: { ...EMPTY_INPUT, aimAngle: 0 },
+    b: { ...EMPTY_INPUT, aimAngle: Math.PI },
+  });
+  assert.ok(parryState.players[0].vx < 0 && parryState.players[1].vx > 0, 'Expected knob parry to bounce both players apart');
+  assert.ok(
+    parryState.players[0].knobFlashTimer > 0 && parryState.players[1].knobFlashTimer > 0,
+    'Expected parry clash to flash both knobs'
+  );
+});
+
+

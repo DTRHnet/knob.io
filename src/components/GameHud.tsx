@@ -21,6 +21,8 @@ export interface HudSnapshot {
   humanAlive: boolean;
   humanSpeed: number;
   humanBounceChain: number;
+  humanMass: number;
+  humanAirJumps: number;
 }
 
 interface GameHudProps {
@@ -33,7 +35,10 @@ interface GameHudProps {
   onRestart: () => void;
   onToggleSpectatorCam: () => void;
   onToggleTouchControls: () => void;
-  onTouchInput: (key: 'left' | 'right' | 'up' | 'down' | 'heavy' | 'emote', pressed: boolean) => void;
+  onTouchInput: (
+    key: 'left' | 'right' | 'up' | 'down' | 'heavy' | 'emote' | 'spinLeft' | 'spinRight',
+    pressed: boolean
+  ) => void;
 }
 
 const MODIFIER_NAME: Record<ArcadeModifier, string> = {
@@ -94,12 +99,28 @@ export const GameHud: React.FC<GameHudProps> = ({
               >
                 {hud.humanSpeed} u/s
               </span>
+              {hud.humanMass > 1.05 && (
+                <span
+                  className="font-mono tabular-nums text-amber-300 hidden sm:inline shrink-0"
+                  title="Current Weight Multiplier"
+                >
+                  {hud.humanMass.toFixed(2)}x WT
+                </span>
+              )}
               {hud.humanBounceChain >= 1 && (
                 <span
                   className="font-mono tabular-nums font-bold text-emerald-400 shrink-0"
                   title="Active Bounce Chain"
                 >
                   x{hud.humanBounceChain}
+                </span>
+              )}
+              {hud.humanAirJumps > 0 && (
+                <span
+                  className="font-mono tabular-nums text-sky-300 hidden sm:inline shrink-0"
+                  title="Double Jump Ready"
+                >
+                  2J
                 </span>
               )}
             </div>
@@ -235,6 +256,28 @@ export const GameHud: React.FC<GameHudProps> = ({
               </button>
             </div>
             <div className="flex items-center gap-2">
+              <button
+                type="button"
+                aria-label="Spin Knob Left"
+                onPointerDown={() => onTouchInput('spinLeft', true)}
+                onPointerUp={() => onTouchInput('spinLeft', false)}
+                onPointerLeave={() => onTouchInput('spinLeft', false)}
+                className="w-11 h-12 rounded-xl border border-cyan-400/35 text-cyan-200 font-bold text-base active:bg-cyan-500/25"
+                style={{ background: 'rgba(14, 18, 27, 0.85)' }}
+              >
+                ↺
+              </button>
+              <button
+                type="button"
+                aria-label="Spin Knob Right"
+                onPointerDown={() => onTouchInput('spinRight', true)}
+                onPointerUp={() => onTouchInput('spinRight', false)}
+                onPointerLeave={() => onTouchInput('spinRight', false)}
+                className="w-11 h-12 rounded-xl border border-cyan-400/35 text-cyan-200 font-bold text-base active:bg-cyan-500/25"
+                style={{ background: 'rgba(14, 18, 27, 0.85)' }}
+              >
+                ↻
+              </button>
               <button
                 type="button"
                 aria-label="Emote"
