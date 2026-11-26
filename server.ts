@@ -8,7 +8,7 @@ import { BUILTIN_MAPS, getDailyChallengeMap, getWeeklyRankedMap } from './src/ga
 import { computeRankTier, filterProfanity } from './src/game/physics';
 import { ArenaMap, LobbyRoomSummary, PlayerProfile, ReplayClip } from './src/game/types';
 
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
 const DATA_FILE = path.resolve(process.cwd(), '.knob_store.json');
 
 interface StoreData {
