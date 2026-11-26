@@ -1,5 +1,6 @@
 import React from 'react';
 import { ArcadeModifier, GameMode, PlayerState } from '../game/types';
+import { TouchJoysticks } from './TouchJoysticks';
 
 export interface HudSnapshot {
   timeRemaining: number;
@@ -132,7 +133,7 @@ export const GameHud: React.FC<GameHudProps> = ({
           <button
             type="button"
             tabIndex={-1}
-            aria-label={touchControlsEnabled ? 'Hide Touch Pad' : 'Show Touch Pad'}
+            aria-label={touchControlsEnabled ? 'Hide Touch Joysticks' : 'Show Touch Joysticks'}
             title="Toggle Touch Controls"
             onClick={(e) => {
               e.currentTarget.blur();
@@ -229,89 +230,7 @@ export const GameHud: React.FC<GameHudProps> = ({
 
       {/* Bottom Perimeter Row: Player Stock & Objective Strip + Optional Touch Controls */}
       <div className="flex flex-col gap-3">
-        {touchControlsEnabled && (
-          <div className="flex items-end justify-between gap-4 pointer-events-auto pb-1">
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                aria-label="Move Left"
-                onPointerDown={() => onTouchInput('left', true)}
-                onPointerUp={() => onTouchInput('left', false)}
-                onPointerLeave={() => onTouchInput('left', false)}
-                className="w-12 h-12 rounded-xl border border-white/20 text-white font-bold text-lg active:bg-white/20"
-                style={{ background: 'rgba(14, 18, 27, 0.85)' }}
-              >
-                ◀
-              </button>
-              <button
-                type="button"
-                aria-label="Move Right"
-                onPointerDown={() => onTouchInput('right', true)}
-                onPointerUp={() => onTouchInput('right', false)}
-                onPointerLeave={() => onTouchInput('right', false)}
-                className="w-12 h-12 rounded-xl border border-white/20 text-white font-bold text-lg active:bg-white/20"
-                style={{ background: 'rgba(14, 18, 27, 0.85)' }}
-              >
-                ▶
-              </button>
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                aria-label="Spin Knob Left"
-                onPointerDown={() => onTouchInput('spinLeft', true)}
-                onPointerUp={() => onTouchInput('spinLeft', false)}
-                onPointerLeave={() => onTouchInput('spinLeft', false)}
-                className="w-11 h-12 rounded-xl border border-cyan-400/35 text-cyan-200 font-bold text-base active:bg-cyan-500/25"
-                style={{ background: 'rgba(14, 18, 27, 0.85)' }}
-              >
-                ↺
-              </button>
-              <button
-                type="button"
-                aria-label="Spin Knob Right"
-                onPointerDown={() => onTouchInput('spinRight', true)}
-                onPointerUp={() => onTouchInput('spinRight', false)}
-                onPointerLeave={() => onTouchInput('spinRight', false)}
-                className="w-11 h-12 rounded-xl border border-cyan-400/35 text-cyan-200 font-bold text-base active:bg-cyan-500/25"
-                style={{ background: 'rgba(14, 18, 27, 0.85)' }}
-              >
-                ↻
-              </button>
-              <button
-                type="button"
-                aria-label="Emote"
-                onPointerDown={() => onTouchInput('emote', true)}
-                onPointerUp={() => onTouchInput('emote', false)}
-                className="px-3 h-12 rounded-xl border border-white/20 text-slate-200 font-semibold text-xs active:bg-white/20"
-                style={{ background: 'rgba(14, 18, 27, 0.85)' }}
-              >
-                Emote
-              </button>
-              <button
-                type="button"
-                aria-label="Heavy Mode"
-                onPointerDown={() => onTouchInput('heavy', true)}
-                onPointerUp={() => onTouchInput('heavy', false)}
-                onPointerLeave={() => onTouchInput('heavy', false)}
-                className="px-4 h-12 rounded-xl border border-amber-400/40 text-amber-200 font-bold text-xs active:bg-amber-500/30"
-                style={{ background: 'rgba(14, 18, 27, 0.85)' }}
-              >
-                HEAVY
-              </button>
-              <button
-                type="button"
-                aria-label="Jump"
-                onPointerDown={() => onTouchInput('up', true)}
-                onPointerUp={() => onTouchInput('up', false)}
-                onPointerLeave={() => onTouchInput('up', false)}
-                className="w-14 h-12 rounded-xl bg-[#FF4D3D] text-white font-bold text-xs active:scale-95"
-              >
-                JUMP
-              </button>
-            </div>
-          </div>
-        )}
+        {touchControlsEnabled && <TouchJoysticks onTouchInput={onTouchInput} />}
 
         <div className="flex flex-wrap items-center justify-center gap-2 sm:gap-3">
           {hud.players.map((p) => (
